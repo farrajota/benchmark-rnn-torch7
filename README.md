@@ -1,20 +1,29 @@
 # RNN modules/libraries benchmark on Torch7
 
-Train and test rnn modules like (rnn, lstm, gru, etc.) of different libraries on a simple task for character prediction of a sequence.
+Train and test rnn modules like (rnn, lstm, gru, etc.) of different libraries on a simple task for word language model.
 
-The rnn modules evaluated on this repo are the following:
+The evaluated rnn modules on this repo are the following:
 
 - RNN
 - LSTM
-- FastLSTM
 - BLSTM
 - GRU
 
 ## Requirements
 
-To use this repository you must have [Torch7](http://torch.ch/) installed on your system. It is best to have an up-to-date version of torch7 before running this code.
+To use this repository you must have [Torch7](http://torch.ch/) installed on your system. It is best to have an up-to-date version of torch7 before running this code. To do this, simply go to your `torch/` folder and run the `./update.sh` file.
 
-To do this, simply go to your `torch/` folder and run the `./update.sh` file.
+Also, you'll need a NVIDIA GPU with compute capability 3.5+ (2GB+ ram) and `CUDNN R5` installed in order to run this code.
+
+Next, you'll need to install the following dependencies for torch7:
+
+```bash
+luarocks install cutorch
+luarocks install cudnn
+luarocks install torchnet
+luarocks install tds
+```
+
 
 ### Torch7 RNN libraries
 
