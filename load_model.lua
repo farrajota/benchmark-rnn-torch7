@@ -6,102 +6,121 @@
 require 'nn'
 require 'cudnn'
 require 'rnn'
-require 'rnnlib'
 require 'nngraph'
 
 
 ------------------------------------------------------------------------------------------------------------
 
-local function setup_rnn_module(opt)
-    local rnn_module
-
+local function is_backend_cudnn(opt)
     local str = string.lower(opt.model)
-    if str == 'rnn_rnn' then
-    elseif str == 'rnn_rnnlib' then
-    elseif str == 'rnnrelu_cudnn' then
+    if str == 'rnnrelu_cudnn' then
+        return true
     elseif str == 'rnntanh_cudnn' then
-
-    elseif str == 'lstm_rnn' then
-    elseif str == 'fastlstm_rnn' then
-        nn.FastLSTM.usenngraph = true -- faster
-        nn.FastLSTM.bn = opt.bn
-        rnn = nn.FastLSTM(inputsize, hiddensize)
-    elseif str == 'lstm_rnnlib' then
+        return true
     elseif str == 'lstm_cudnn' then
+        return true
     elseif str == 'blstm_cudnn' then
-
-    elseif str == 'gru_rnn' then
-    elseif str == 'gru_rnnlib' then
+        return true
     elseif str == 'gru_cudnn' then
+        return true
     else
-        error('Invalid/Undefined model name: ' .. opt.model)
+        return false
     end
-
-    return rnn_module
 end
 
 ------------------------------------------------------------------------------------------------------------
 
-local function setup_model(opt)
-    assert(opt, 'Missing input arg: options')
+local function rnn_module(inputsize, hiddensize, opt)
+    assert(inputsize)
+    assert(hiddensize)
+    assert(opt)
 
-    local model = nn.Sequential()
-
-    -- input layer (i.e. word embedding space)
-    local lookup = nn.LookupTable(#trainset.ivocab, opt.inputsize)
-    lookup.maxOutNorm = -1 -- prevent weird maxnormout behaviour
-    model:add(lookup) -- input is seqlen x batchsize
-    if opt.dropout > 0 and not opt.gru then  -- gru has a dropout option
-        model:add(nn.Dropout(opt.dropout))
+    local str = string.lower(opt.model)
+    if str == 'rnn_rnn' then
+        local rm =  nn.Sequential() -- input is {x[t], h[t-1]}
+            :add(nn.ParallelTable()
+                :add(i==1 and nn.Identity() or nn.Linear(inputsize, hiddensize)) -- input layer
+                :add(nn.Linear(hiddensize, hiddensize))) -- recurrent layer
+            :add(nn.CAddTable()) -- merge
+            :add(nn.Sigmoid()) -- transfer
+        return nn.Recurrence(rm, hiddensize, 1)
+    elseif str == 'lstm_rnn' then
+        return nn.LSTM(inputsize, hiddensize)
+    elseif str == 'fastlstm_rnn' then
+        nn.FastLSTM.usenngraph = true -- faster
+        nn.FastLSTM.bn = opt.bn
+        return nn.FastLSTM(inputsize, hiddensize)
+    elseif str == 'gru_rnn' then
+        return nn.GRU(inputsize, hiddensize)
+    elseif str == 'rnnrelu_cudnn' then
+        return cudnn.RNNReLU(inputsize, hiddensize, 1)
+    elseif str == 'rnntanh_cudnn' then
+        return cudnn.RNNTanh(inputsize, hiddensize, 1)
+    elseif str == 'lstm_cudnn' then
+        return cudnn.LSTM(inputsize, hiddensize, 1)
+    elseif str == 'blstm_cudnn' then
+        return cudnn.BLSTM(inputsize, hiddensize, 1)
+    elseif str == 'gru_cudnn' then
+        return cudnn.GRU(inputsize, hiddensize, 1)
+    else
+        error('Invalid/Undefined model name: ' .. opt.model)
     end
-    model:add(nn.SplitTable(1)) -- tensor to table of tensors
+end
 
-    -- rnn layers
-    local stepmodule = nn.Sequential() -- applied at each time-step
+------------------------------------------------------------------------------------------------------------
+
+local function setup_rnn_module(opt)
+    local rnn_layers = nn.Sequential()
     local inputsize = opt.inputsize
     for i, hiddensize in ipairs(opt.hiddensize) do
-        local rnn = setup_rnn_module(opt)
-        if opt.gru then -- Gated Recurrent Units
-            rnn = nn.GRU(inputsize, hiddensize, nil, opt.dropout/2)
-        elseif opt.lstm then -- Long Short Term Memory units
-            nn.FastLSTM.usenngraph = true -- faster
-            nn.FastLSTM.bn = opt.bn
-            rnn = nn.FastLSTM(inputsize, hiddensize)
-        elseif opt.mfru then -- Multi Function Recurrent Unit
-            rnn = nn.MuFuRu(inputsize, hiddensize)
-        else -- simple recurrent neural network
-            local rm =  nn.Sequential() -- input is {x[t], h[t-1]}
-                :add(nn.ParallelTable()
-                    :add(i==1 and nn.Identity() or nn.Linear(inputsize, hiddensize)) -- input layer
-                    :add(nn.Linear(hiddensize, hiddensize))) -- recurrent layer
-                :add(nn.CAddTable()) -- merge
-                :add(nn.Sigmoid()) -- transfer
-            rnn = nn.Recurrence(rm, hiddensize, 1)
-        end
+        -- add module to the network
+        rnn_layers:add(rnn_module(inputsize, hiddensize, opt))
 
-        stepmodule:add(rnn)
-
+        -- add dropout (if enabled)
         if opt.dropout > 0 then
-            stepmodule:add(nn.Dropout(opt.dropout))
+            rnn_layers:add(nn.Dropout(opt.dropout))
         end
 
         inputsize = hiddensize
     end
+    return rnn_layers
+end
+
+------------------------------------------------------------------------------------------------------------
+
+local function setup_model(vocab_size, opt)
+    assert(opt, 'Missing input arg: options')
+
+    -- input layer (i.e. word embedding space)
+    local lookup = nn.LookupTable(vocab_size, opt.inputsize)
+    lookup.maxOutNorm = -1 -- prevent weird maxnormout behaviour
+
+    -- rnn layers
+    local rnn_layers = setup_rnn_module(opt)
 
     -- output layer
-    stepmodule:add(nn.Linear(inputsize, #trainset.ivocab))
-    stepmodule:add(nn.LogSoftMax())
+    local classifier = nn.Sequential()
+    classifier:add(nn.Linear(opt.inputsize, vocab_size))
+    classifier:add(nn.LogSoftMax())
 
-    -- encapsulate stepmodule into a Sequencer
-    model:add(nn.Sequencer(stepmodule))
-
-    -- remember previous state between batches
-    model:remember((opt.lstm or opt.gru or opt.mfru) and 'both' or 'eval')
-
-    if not opt.silent then
-        print"Language Model:"
-        print(model)
+    local model = nn.Sequential()
+    -- add input layer
+    model:add(lookup)
+    if opt.dropout > 0 then
+        model:add(nn.Dropout(opt.dropout))
     end
+    -- add rnn layers
+    if is_backend_cudnn(opt) then
+        model:add(rnn_layers)
+    else
+        model:add(nn.SplitTable(1)) -- tensor to table of tensors
+        -- encapsulate rnn layers into a Sequencer
+        model:add(nn.Sequencer(rnn_layers))
+    end
+    -- encapsulate classifier into a Sequencer
+    model:add(nn.Sequencer(classifier))
+    -- remember previous state between batches
+    model:remember()
 
     if opt.uniform > 0 then
         for k,param in ipairs(model:parameters()) do
@@ -109,29 +128,30 @@ local function setup_model(opt)
         end
     end
 
+    print('Model: ')
+    print(model)
+
     return model
 end
 
 ------------------------------------------------------------------------------------------------------------
 
 local function setup_criterion()
-    local crit = nn.CrossEntropyCriterion()
+    local criterion = nn.CrossEntropyCriterion()
+    return criterion
 end
 
 ------------------------------------------------------------------------------------------------------------
 
-local load_model_criterion(opt)
+function load_model_criterion(vocab_size, opt)
+    assert(vocab_size)
     assert(opt)
 
-    local model = setup_model(opt)
-    local criterion = setup_criterion(opt)
+    local model = setup_model(vocab_size, opt)
+    local criterion = setup_criterion()
 
     model:cuda()
     criterion:cuda()
 
     return model, criterion
 end
-
-------------------------------------------------------------------------------------------------------------
-
-return load_model_criterion
