@@ -6,7 +6,10 @@
 require 'paths'
 require 'torch'
 require 'string'
+require 'optim'
 
+paths.dofile('data.lua')
+paths.dofile('load_model.lua')
 
 local tnt = require 'torchnet'
 
@@ -24,82 +27,146 @@ cmd:text()
 cmd:option('-dataset',  'shakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
 cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
-cmd:option('-nGPU',        1, 'Number of GPUs to use by default')
-cmd:option('-nThreads',    2, 'Number of data loading threads')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
 cmd:option('-model',   'lstm_rnn', 'Name of the model (see load_model.lua file for more information).')
-cmd:option('-rnn_size',   256, 'size of LSTM internal state')
-cmd:option('-num_layers',   2, 'number of layers in the LSTM')
+cmd:option('-rnn_size',   {256, 256}, 'size of RNN\'s internal state')
 cmd:option('-bn', false, 'Use batch normalization. Only supported with fastlstm')
+cmd:option('-uniform',   0.1, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
+cmd:text()
+cmd:text(' ---------- Hyperparameter options -----------------------------')
+cmd:text()
+cmd:option('-LR',               1e-3, 'Learning rate')
+cmd:option('-LRdecay',           0.0, 'Learning rate decay')
+cmd:option('-momentum',          0.0, 'Momentum')
+cmd:option('-weightDecay',       0.0, 'Weight decay')
+cmd:option('-optMethod',      'adam', 'Optimization method: rmsprop | sgd | nag | adadelta.')
+cmd:option('-threshold',       0.001, 'Threshold (on validation accuracy growth) to cut off training early')
+cmd:option('-LR_reduce_factor',   10, 'Reduce the learning rate by a factor.')
 cmd:text()
 cmd:text(' ---------- Train options --------------------------------------')
 cmd:text()
-cmd:option('-niters',                1e4,'Number of iterations')
-cmd:option('-batchSize',             32, 'number of samples per batch')
-cmd:option('-optimizer',          'adam','Network optimizer: adam | sgd | adagrad | rmsprop.')
-cmd:option('-learning_rate',        2e-3,'learning rate')
-cmd:option('-learning_rate_decay',  0.97,'learning rate decay')
-cmd:option('-decay_rate',           0.95,'decay rate for rmsprop')
-cmd:option('-dropout',                 0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
-cmd:option('-seq_length',             50,'number of timesteps to unroll for')
-cmd:option('-batch_size',             50,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',             50,'number of full passes through the training data')
-cmd:option('-grad_clip',               5,'clip gradients at this value')
-cmd:option('-train_frac',           0.95,'fraction of data that goes into train set')
-cmd:option('-val_frac',             0.05,'fraction of data that goes into validation set')
+cmd:option('-optimizer',      'adam', 'Network optimizer:  adam | rmsprop | sgd | adadelta | adagrad.')
+cmd:option('-nEpochs',            20, 'Number of epochs for train.')
+cmd:option('-epoch_reduce',       10, 'Reduce the LR at every n epochs.')
+cmd:option('-trainIters',        1e5, 'Number of iterations')
+cmd:option('-testIters',        1000, 'Number of iterations')
+cmd:option('-seq_length',         50, 'number of timesteps to unroll for')
+cmd:option('-batchSize',          32, 'number of samples per batch')
+cmd:option('-dropout',          0.25, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-grad_clip',           5, 'clip gradients at this value')
+cmd:option('-train_frac',       0.95, 'fraction of data that goes into train set')
+cmd:option('-val_frac',         0.05, 'fraction of data that goes into validation set')
+cmd:option('-snapshot',            1, 'Save a snapshot at every N epochs.')
+cmd:option('-print_every',        10, 'Print the loss at every N steps.')
 cmd:text()
 
 local opt = cmd:parse(arg or {})
-local opt.expDir = paths.concat('data/exp/', ('%s_size=%s_nlayers=%s'):format(model))
+opt.save = paths.concat('data/exp/', ('%s_size=%s_nlayers=%s'):format(opt.model, opt.rnn_size[1], #opt.rnn_size))
+opt.num_layers = #opt.rnn_size
+opt.inputsize = opt.seq_length
+opt.hiddensize = opt.rnn_size
 
 torch.manualSeed(opt.manualSeed)
-
-
---------------------------------------------------------------------------------
--- Setup model + loss criterion
---------------------------------------------------------------------------------
-
-local model, criterion = paths.dofile('models/load_model.lua')(opt)
 
 
 --------------------------------------------------------------------------------
 -- Data generator
 --------------------------------------------------------------------------------
 
+-- train / val / test split for data, in fractions
+local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
+opt.split_fractions = {opt.train_frac, opt.val_frac, test_frac}
+
+local data = load_data(opt)
+
+local trainIters = data.ntrain
+local testIters = data.nval
+
 local function getIterator(mode)
-    return tnt.ParallelDatasetIterator{
-        nthread = opt.nThreads,
-        init    = function(threadid)
-                    require 'torch'
-                    require 'torchnet'
-                    opt = lopt
-                    paths.dofile('data.lua')
-                    torch.manualSeed(threadid+opt.manualSeed)
-                  end,
-        closure = function()
+    -- setup data loader
+    local data = data
 
-            -- setup data loader
-            local data_loader = select_dataset_loader(opt.dataset, mode)
-            local loader = data_loader[mode]
+    -- number of iterations
+    local nIters = (mode=='train' and trainIters) or testIters
 
-            -- number of iterations
-            local nIters = opt.trainIters
+    return tnt.ListDataset{
+        list = torch.range(1, nIters):long(),
+        load = function(idx)
+            local input, target = get_sample_batch(data, (mode=='train' and 1) or 2)
+            return {
+                input = input,
+                target = target
+            }
+        end
+    }:iterator()
+end
 
-            -- setup dataset iterator
-            return tnt.ListDataset{
-                list = torch.range(1, nIters):long(),
-                load = function(idx)
-                    local input, label = getSampleBatch(loader, opt.batchSize)
-                    return {
-                        input = input,
-                        target = label
-                    }
-                end
-            }:batch(1, 'include-last')
-        end,
+
+--------------------------------------------------------------------------------
+-- Model + Loss criterion
+--------------------------------------------------------------------------------
+
+local model, criterion = load_model_criterion(data.vocab_size, opt)
+
+
+--------------------------------------------------------------------------------
+-- Optimizer
+--------------------------------------------------------------------------------
+
+local function optimizer(name)
+    if name == 'adam' then
+        return optim.adam
+    elseif name == 'rmsprop' then
+        return optim.rmsprop
+    elseif name == 'sgd' then
+        return optim.sgd
+    elseif name == 'adadelta' then
+        return optim.adadelta
+    elseif name == 'adagrad' then
+        return optim.adagrad
+    else
+        error('Invalid optimizer: ' .. name .. '. Valid optimizers: adam | rmsprop | sgd | adadelta | adagrad.')
+    end
+end
+
+
+local function optimState(epoch)
+    if epoch % opt.epoch_reduce == 0 then
+        opt.LR = opt.LR / opt.LR_reduce_factor
+    end
+    return {
+        learningRate = opt.LR,
+        learningRateDecay = opt.LRdecay,
+        momentum = opt.momentum,
+        dampening = 0.0,
+        weightDecay = opt.weightDecay
     }
+end
+
+
+
+
+--------------------------------------------------------------------------------
+-- Utility functions
+--------------------------------------------------------------------------------
+
+-- Gradient clipping to try to prevent the gradient from exploding.
+-- ref: https://github.com/facebookresearch/torch-rnnlib/blob/master/examples/word-language-model/word_lm.lua#L216-L233
+local function clipGradients(grads, norm)
+    local totalnorm = 0
+    for mm = 1, #grads do
+        local modulenorm = grads[mm]:norm()
+        totalnorm = totalnorm + modulenorm * modulenorm
+    end
+    totalnorm = math.sqrt(totalnorm)
+    if totalnorm > norm then
+        local coeff = norm / math.max(totalnorm, 1e-6)
+        for mm = 1, #grads do
+            grads[mm]:mul(coeff)
+        end
+    end
 end
 
 
@@ -107,11 +174,15 @@ end
 -- Setup torchnet engine/meters/loggers
 --------------------------------------------------------------------------------
 
+local timers = {
+   batchTimer = torch.Timer(),
+   dataTimer = torch.Timer(),
+   epochTimer = torch.Timer(),
+}
+
 local meters = {
     train_err = tnt.AverageValueMeter(),
-    train_accu = tnt.AverageValueMeter(),
     test_err = tnt.AverageValueMeter(),
-    test_accu = tnt.AverageValueMeter(),
 }
 
 function meters:reset()
@@ -122,14 +193,14 @@ function meters:reset()
 end
 
 local loggers = {
-    test = Logger(paths.concat(opt.save,'test.log'), opt.continue),
-    train = Logger(paths.concat(opt.save,'train.log'), opt.continue),
-    full_train = Logger(paths.concat(opt.save,'full_train.log'), opt.continue),
+    test = optim.Logger(paths.concat(opt.save,'test.log'), opt.continue),
+    train = optim.Logger(paths.concat(opt.save,'train.log'), opt.continue),
+    full_train = optim.Logger(paths.concat(opt.save,'full_train.log'), opt.continue),
 }
 
-loggers.test:setNames{'Test Loss', 'Test acc.'}
-loggers.train:setNames{'Train Loss', 'Train acc.'}
-loggers.full_train:setNames{'Train Loss', 'Train accuracy'}
+loggers.test:setNames{'Test Loss'}
+loggers.train:setNames{'Train Loss'}
+loggers.full_train:setNames{'Train Loss'}
 
 loggers.test.showPlot = false
 loggers.train.showPlot = false
@@ -139,69 +210,73 @@ loggers.full_train.showPlot = false
 -- set up training engine:
 local engine = tnt.OptimEngine()
 
+
 engine.hooks.onStart = function(state)
-    if state.training then
-        state.config = optimStateFn(state.epoch+1)
-        if opt.epochNumber>1 then
-            state.epoch = math.max(opt.epochNumber, state.epoch)
-        end
-    end
+    state.epoch = 1
 end
 
 
 engine.hooks.onStartEpoch = function(state)
     print('\n**********************************************')
-    print(('Starting Train epoch %d/%d  %s'):format(state.epoch+1, state.maxepoch,  opt.save))
+    print(('Starting Train epoch %d/%d'):format(state.epoch+1, state.maxepoch))
     print('**********************************************')
-    state.config = optimStateFn(state.epoch+1)
+    state.config = optimState(state.epoch)
+    timers.epochTimer:reset()
+end
+
+
+-- copy sample to GPU buffer:
+local inputs, targets = torch.CudaTensor(), torch.CudaTensor()
+
+engine.hooks.onSample = function(state)
+    cutorch.synchronize(); collectgarbage();
+    inputs:resize(state.sample.input:size() ):copy(state.sample.input)
+    targets:resize(state.sample.target:size() ):copy(state.sample.target)
+    timers.dataTimer:stop()
+    timers.batchTimer:reset()
 end
 
 
 engine.hooks.onForwardCriterion = function(state)
     if state.training then
-        xlua.progress((state.t+1), nBatchesTrain)
-
-        -- compute the PCK accuracy of the networks (last) output heatmap with the ground-truth heatmap
-        --local acc = accuracy(state.network.output, state.sample.target)
-        --
-        --meters.train_err:add(state.criterion.output)
-        --meters.train_accu:add(acc)
-        --loggers.full_train:add{state.criterion.output, acc}
+        if (state.t+1) % opt.print_every == 0 then
+            print(string.format("(epoch %d) %d/%d, train_loss = %6.8f, time/batch = %.4fs",
+                state.epoch, (state.t+1), trainIters, state.criterion.output, timers.batchTimer:time().real))
+        end
+        xlua.progress((state.t+1), opt.trainIters)
+        meters.train_err:add(state.criterion.output)
     else
-        xlua.progress(state.t, nBatchesTest)
-
-        -- compute the PCK accuracy of the networks (last) output heatmap with the ground-truth heatmap
-        --local acc = accuracy(state.network.output, state.sample.target)
-        --
-        --meters.test_err:add(state.criterion.output)
-        --meters.test_accu:add(acc)
+        if (state.t+1) % opt.print_every == 0 then
+            print(string.format("(epoch %d) %d/%d, test_loss = %6.8f, time/batch = %.4fs",
+                state.epoch, (state.t+1), testIters, state.criterion.output, timers.batchTimer:time().real))
+        end
+        meters.test_err:add(state.criterion.output)
     end
 end
 
 
--- copy sample to GPU buffer:
-local inputs, targets = cast(torch.Tensor()), cast(torch.Tensor())
-
-engine.hooks.onSample = function(state)
-    cutorch.synchronize(); collectgarbage();
-    inputs:resize(state.sample.input[1]:size() ):copy(state.sample.input[1])
-    targets:resize(state.sample.target[1]:size() ):copy(state.sample.target[1])
-
-    state.sample.input  = inputs
-    state.sample.target = utils.ReplicateTensor2Table(targets, opt.nOutputs)
+engine.hooks.onUpdate = function(state)
+    timers.dataTimer:reset()
+    timers.dataTimer:resume()
 end
 
 
-local test_best_accu = 0
+local _, grads = model:parameters()
+
+engine.hooks.onBackward = function(state)
+    -- clip gradients to prevent them from exploding
+    clipGradients(grads, opt.clip)
+end
+
+
 engine.hooks.onEndEpoch = function(state)
     ---------------------------------
     -- measure test loss and error:
     ---------------------------------
 
-    print(('Train Loss: %0.5f; Acc: %0.5f'):format(meters.train_err:value(),  meters.train_accu:value()))
+    print(('Train Loss: %0.5f'):format(meters.train_err:value() ))
     local tr_loss = meters.train_err:value()
-    local tr_accuracy = meters.train_accu:value()
-    loggers.train:add{tr_loss, tr_accuracy}
+    loggers.train:add{tr_loss}
     meters:reset()
     state.t = 0
 
@@ -215,27 +290,25 @@ engine.hooks.onEndEpoch = function(state)
     print('**********************************************')
     engine:test{
         network   = model,
-        iterator  = getIterator('test'),
+        iterator  = getIterator('val'),
         criterion = criterion,
     }
     local ts_loss = meters.test_err:value()
-    local ts_accuracy = meters.test_accu:value()
-    loggers.test:add{ts_loss, ts_accuracy}
-    print(('Test Loss: %0.5f; Acc: %0.5f'):format(meters.test_err:value(),  meters.test_accu:value()))
+    loggers.test:add{ts_loss}
+    print(('Test Loss: %0.5f'):format(meters.test_err:value() ))
 
 
-    -----------------------------
-    -- save the network to disk
-    -----------------------------
+    ---------------------------
+    -- save network to disk
+    ---------------------------
 
-    --storeModel(state.network.modules[1], state.config, state.epoch, opt)
-    storeModel(state.network.modules[1], state.config, state.epoch, opt)
-
-    if ts_accuracy > test_best_accu and opt.saveBest then
-        storeModelBest(state.network.modules[1], opt)
-        test_best_accu = ts_accuracy
+    if state.epoch % opt.snapshot == 0 then
+        local snapshot_filename = paths.concat(opt.save, opt.model .. '_' .. state.epoch .. '.t7')
+        print('> Saving model snapshot to disk: ' .. snapshot_filename)
+        torch.save(snapshot_filename, state.network)
     end
 
+    timers.epochTimer:reset()
     state.t = 0
 end
 
@@ -249,7 +322,9 @@ engine:train{
     network   = model,
     iterator  = getIterator('train'),
     criterion = criterion,
-    optimMethod = optim[opt.optMethod],
-    config = optimStateFn(1),
-    maxepoch = nEpochs
+    optimMethod = optimizer(opt.optimizer),
+    config = optimState(1),
+    maxepoch = opt.nEpochs
 }
+
+print('==> Script Complete.')
