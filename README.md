@@ -31,7 +31,6 @@ This repository makes use of the following libraries for evaluation of several i
 
 - [rnn](https://github.com/Element-Research/rnn)
 - [cudnn](https://github.com/soumith/cudnn.torch)
-- [rnnlib](https://github.com/facebookresearch/torch-rnnlib)
 
 
 To install these packages just run the following command:
@@ -39,8 +38,6 @@ To install these packages just run the following command:
 ```bash
 luarocks install rnn
 luarocks install cudnn
-git clone https://github.com/facebookresearch/torch-rnnlib
-cd torch-rnnlib && luarocks make rocks/rnnlib-0.1-1.rockspec
 ```
 
 ## Getting started
