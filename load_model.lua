@@ -4,6 +4,7 @@
 
 
 require 'nn'
+require 'cunn'
 require 'cudnn'
 require 'rnn'
 require 'nngraph'
@@ -36,6 +37,7 @@ local function rnn_module(inputsize, hiddensize, opt)
     assert(opt)
 
     local str = string.lower(opt.model)
+    -- rnn
     if str == 'rnn_rnn' then
         local rm =  nn.Sequential() -- input is {x[t], h[t-1]}
             :add(nn.ParallelTable()
@@ -52,6 +54,8 @@ local function rnn_module(inputsize, hiddensize, opt)
         return nn.FastLSTM(inputsize, hiddensize)
     elseif str == 'gru_rnn' then
         return nn.GRU(inputsize, hiddensize)
+
+    -- cudnn
     elseif str == 'rnnrelu_cudnn' then
         return cudnn.RNNReLU(inputsize, hiddensize, 1)
     elseif str == 'rnntanh_cudnn' then
@@ -100,8 +104,7 @@ local function setup_model(vocab_size, opt)
 
     -- output layer
     local classifier = nn.Sequential()
-    classifier:add(nn.Linear(opt.inputsize, vocab_size))
-    classifier:add(nn.LogSoftMax())
+    classifier:add(nn.Linear(opt.hiddensize[opt.num_layers], vocab_size))
 
     local model = nn.Sequential()
     -- add input layer
@@ -112,6 +115,7 @@ local function setup_model(vocab_size, opt)
     -- add rnn layers
     if is_backend_cudnn(opt) then
         model:add(rnn_layers)
+        model:add(nn.SplitTable(1))
     else
         model:add(nn.SplitTable(1)) -- tensor to table of tensors
         -- encapsulate rnn layers into a Sequencer
@@ -130,7 +134,7 @@ local function setup_model(vocab_size, opt)
         end
     end
 
-    print('Model: ')
+    print('==> Print model to screen:')
     print(model)
 
     return model
@@ -139,7 +143,8 @@ end
 ------------------------------------------------------------------------------------------------------------
 
 local function setup_criterion()
-    local criterion = nn.CrossEntropyCriterion()
+    local crit = nn.CrossEntropyCriterion()
+    local criterion = nn.SequencerCriterion(crit)
     return criterion
 end
 
