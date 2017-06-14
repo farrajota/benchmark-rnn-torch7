@@ -22,6 +22,10 @@ torch.setdefaulttensortype('torch.FloatTensor')
 
 local cmd = torch.CmdLine()
 cmd:text()
+cmd:text('Train a character-level language model on Torch7.')
+cmd:text()
+cmd:text('Options')
+cmd:text()
 cmd:text(' ---------- General options ------------------------------------')
 cmd:text()
 cmd:option('-dataset',  'shakespear', 'Dataset choice: shakespear | linux | wikipedia.')
@@ -30,10 +34,10 @@ cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
-cmd:option('-model',   'lstm_rnn', 'Name of the model (see load_model.lua file for more information).')
+cmd:option('-model',   'lstm_cudnn', 'Name of the model (see load_model.lua file for more information).')
 cmd:option('-rnn_size',   {256, 256}, 'size of RNN\'s internal state')
 cmd:option('-bn', false, 'Use batch normalization. Only supported with fastlstm')
-cmd:option('-uniform',   0.1, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
+cmd:option('-uniform',   0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
 cmd:text()
 cmd:text(' ---------- Hyperparameter options -----------------------------')
 cmd:text()
@@ -43,30 +47,29 @@ cmd:option('-momentum',          0.0, 'Momentum')
 cmd:option('-weightDecay',       0.0, 'Weight decay')
 cmd:option('-optMethod',      'adam', 'Optimization method: rmsprop | sgd | nag | adadelta.')
 cmd:option('-threshold',       0.001, 'Threshold (on validation accuracy growth) to cut off training early')
-cmd:option('-LR_reduce_factor',   10, 'Reduce the learning rate by a factor.')
+cmd:option('-epoch_reduce',       5, 'Reduce the LR at every n epochs.')
+cmd:option('-LR_reduce_factor',   5, 'Reduce the learning rate by a factor.')
 cmd:text()
 cmd:text(' ---------- Train options --------------------------------------')
 cmd:text()
 cmd:option('-optimizer',      'adam', 'Network optimizer:  adam | rmsprop | sgd | adadelta | adagrad.')
-cmd:option('-nEpochs',            20, 'Number of epochs for train.')
-cmd:option('-epoch_reduce',       10, 'Reduce the LR at every n epochs.')
-cmd:option('-trainIters',        1e5, 'Number of iterations')
-cmd:option('-testIters',        1000, 'Number of iterations')
+cmd:option('-nEpochs',            30, 'Number of epochs for train.')
 cmd:option('-seq_length',         50, 'number of timesteps to unroll for')
 cmd:option('-batchSize',          32, 'number of samples per batch')
-cmd:option('-dropout',          0.25, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-dropout',             0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-grad_clip',           5, 'clip gradients at this value')
 cmd:option('-train_frac',       0.95, 'fraction of data that goes into train set')
 cmd:option('-val_frac',         0.05, 'fraction of data that goes into validation set')
 cmd:option('-snapshot',            1, 'Save a snapshot at every N epochs.')
-cmd:option('-print_every',        10, 'Print the loss at every N steps.')
+cmd:option('-print_every',        50, 'Print the loss at every N steps.')
 cmd:text()
 
 local opt = cmd:parse(arg or {})
-opt.save = paths.concat('data/exp/', ('%s_size=%s_nlayers=%s'):format(opt.model, opt.rnn_size[1], #opt.rnn_size))
 opt.num_layers = #opt.rnn_size
-opt.inputsize = opt.seq_length
+opt.inputsize = opt.rnn_size[1]
 opt.hiddensize = opt.rnn_size
+opt.save = paths.concat('data/exp/', string.format('%s_length=%d_%s_size=%s_nlayers=%s_dropout=%0.2f',
+           opt.dataset, opt.seq_length, opt.model, opt.rnn_size[1], opt.num_layers, opt.dropout))
 
 torch.manualSeed(opt.manualSeed)
 
@@ -187,9 +190,7 @@ local meters = {
 
 function meters:reset()
     self.train_err:reset()
-    self.train_accu:reset()
     self.test_err:reset()
-    self.test_accu:reset()
 end
 
 local loggers = {
@@ -212,7 +213,7 @@ local engine = tnt.OptimEngine()
 
 
 engine.hooks.onStart = function(state)
-    state.epoch = 1
+    state.epoch = 0
 end
 
 
@@ -220,37 +221,42 @@ engine.hooks.onStartEpoch = function(state)
     print('\n**********************************************')
     print(('Starting Train epoch %d/%d'):format(state.epoch+1, state.maxepoch))
     print('**********************************************')
-    state.config = optimState(state.epoch)
+    state.config = optimState(state.epoch+1)
     timers.epochTimer:reset()
 end
 
 
--- copy sample to GPU buffer:
+-- copy sample buffer to GPU:
 local inputs, targets = torch.CudaTensor(), torch.CudaTensor()
-
+local split_targets = nn.SplitTable(1):cuda()
 engine.hooks.onSample = function(state)
     cutorch.synchronize(); collectgarbage();
     inputs:resize(state.sample.input:size() ):copy(state.sample.input)
     targets:resize(state.sample.target:size() ):copy(state.sample.target)
+    state.sample.input  = inputs
+    state.sample.target = split_targets:forward(targets)
+
     timers.dataTimer:stop()
     timers.batchTimer:reset()
 end
 
 
 engine.hooks.onForwardCriterion = function(state)
+
+    local iters
     if state.training then
-        if (state.t+1) % opt.print_every == 0 then
-            print(string.format("(epoch %d) %d/%d, train_loss = %6.8f, time/batch = %.4fs",
-                state.epoch, (state.t+1), trainIters, state.criterion.output, timers.batchTimer:time().real))
-        end
-        xlua.progress((state.t+1), opt.trainIters)
+        iters = trainIters
         meters.train_err:add(state.criterion.output)
     else
-        if (state.t+1) % opt.print_every == 0 then
-            print(string.format("(epoch %d) %d/%d, test_loss = %6.8f, time/batch = %.4fs",
-                state.epoch, (state.t+1), testIters, state.criterion.output, timers.batchTimer:time().real))
-        end
+        iters = trainIters
         meters.test_err:add(state.criterion.output)
+    end
+
+    -- display train info
+    if (state.t+1) % opt.print_every == 0 or (state.t+1) == iters then
+        print(string.format("epoch[%d/%d][%d/%d][batch=%d][length=%d], loss = %6.8f, time/batch = %.4fs, LR=%2.2e",
+            state.epoch+1, opt.nEpochs, (state.t+1), iters, opt.batchSize, opt.seq_length,
+            state.criterion.output, timers.batchTimer:time().real, opt.LR))
     end
 end
 
@@ -265,7 +271,7 @@ local _, grads = model:parameters()
 
 engine.hooks.onBackward = function(state)
     -- clip gradients to prevent them from exploding
-    clipGradients(grads, opt.clip)
+    clipGradients(grads, opt.grad_clip)
 end
 
 
@@ -303,9 +309,9 @@ engine.hooks.onEndEpoch = function(state)
     ---------------------------
 
     if state.epoch % opt.snapshot == 0 then
-        local snapshot_filename = paths.concat(opt.save, opt.model .. '_' .. state.epoch .. '.t7')
+        local snapshot_filename = paths.concat(opt.save, ('model_epoch=%d_loss=%0.4f.t7'):format(state.epoch, ts_loss))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-        torch.save(snapshot_filename, state.network)
+        torch.save(snapshot_filename, {state.network, data})
     end
 
     timers.epochTimer:reset()
