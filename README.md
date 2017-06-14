@@ -18,10 +18,7 @@ Also, you'll need a NVIDIA GPU with compute capability 3.5+ (2GB+ ram) and `CUDN
 Next, you'll need to install the following dependencies for torch7:
 
 ```bash
-luarocks install cutorch
-luarocks install cudnn
 luarocks install torchnet
-luarocks install tds
 ```
 
 
