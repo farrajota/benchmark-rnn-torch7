@@ -105,6 +105,7 @@ local function setup_model(vocab_size, opt)
     -- output layer
     local classifier = nn.Sequential()
     classifier:add(nn.Linear(opt.hiddensize[opt.num_layers], vocab_size))
+    classifier:add(nn.LogSoftMax())
 
     local model = nn.Sequential()
     -- add input layer
@@ -143,7 +144,7 @@ end
 ------------------------------------------------------------------------------------------------------------
 
 local function setup_criterion()
-    local crit = nn.CrossEntropyCriterion()
+    local crit = nn.ClassNLLCriterion()
     local criterion = nn.SequencerCriterion(crit)
     return criterion
 end
