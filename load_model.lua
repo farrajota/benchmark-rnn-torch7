@@ -119,8 +119,10 @@ local function setup_model(vocab_size, opt)
     end
     -- encapsulate classifier into a Sequencer
     model:add(nn.Sequencer(classifier))
-    -- remember previous state between batches
-    model:remember()
+    if not is_backend_cudnn(opt) then
+      -- remember previous state between batches
+      model:remember()
+    end
 
     if opt.uniform > 0 then
         for k,param in ipairs(model:parameters()) do
