@@ -7,12 +7,24 @@ require 'paths'
 require 'torch'
 
 
-local datasets = {'shakespear', 'linux', 'wikipedia'}
+local datasets = {
+    'shakespear',
+    'linux',
+    'wikipedia'
+}
 
 local models = {
-    'rnn_rnn', 'rnn_rnnlib', 'rnnrelu_cudnn', 'rnntanh_cudnn',
-    'lstm_rnn', 'fastlstm_rnn', 'lstm_rnnlib', 'lstm_cudnn', 'blstm_cudnn'
-    'gru_rnn', 'gru_rnnlib', 'gru_cudnn',
+    'rnn_rnn',
+    'rnnrelu_cudnn',
+    'rnntanh_cudnn',
+
+    'lstm_rnn',
+    'fastlstm_rnn',
+    'lstm_cudnn',
+    'blstm_cudnn'
+
+    'gru_rnn',
+    'gru_cudnn'
 }
 
 --------------------------------------------------------------------------------
@@ -29,6 +41,8 @@ for k, set in pairs(datasets) do
     end
 
     -- process plots
+
     -- save plots to disk
+
 end
 
