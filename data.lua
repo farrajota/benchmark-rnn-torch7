@@ -148,14 +148,14 @@ function load_data(opt)
     local ydata = data:clone()
     ydata:sub(1,-2):copy(data:sub(2,-1))
     ydata[-1] = data[1]
-    out.x_batches = data:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
+    out.x_batches =  data:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
     out.nbatches = #out.x_batches
-    out.y_batches = ydata:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
+    out.y_batches = ydata:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
     assert(#out.x_batches == #out.y_batches)
 
     -- lets try to be helpful here
-    if out.nbatches < 50 then
-        print('WARNING: less than 50 batches in the data in total? Looks like very small dataset. You probably want to use smaller batch_size and/or seq_length.')
+    if out.nbatches < opt.batchSize then
+        print('WARNING: less than ' .. opt.batchSize .. ' batches in the data in total? Looks like very small dataset. You probably want to use smaller batch_size and/or seq_length.')
     end
 
     -- perform safety checks on split_fractions
