@@ -37,7 +37,6 @@ cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
 cmd:option('-model',   'lstm_cudnn', 'Name of the model (see load_model.lua file for more information).')
 cmd:option('-rnn_size',  {256, 256}, 'size of RNN\'s internal state')
-cmd:option('-bn', false, 'Use batch normalization. Only supported with fastlstm')
 cmd:option('-dropout',            0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-uniform',          0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
 cmd:text()
@@ -55,10 +54,10 @@ cmd:option('-LR_reduce_factor',   5, 'Reduce the learning rate by a factor.')
 cmd:text()
 cmd:text(' ---------- Train options --------------------------------------')
 cmd:text()
-cmd:option('-nEpochs',            3, 'Number of epochs for train.')
+cmd:option('-nEpochs',            10, 'Number of epochs for train.')
 cmd:option('-seq_length',         50, 'number of timesteps to unroll for')
 cmd:option('-batchSize',          64, 'number of samples per batch')
-cmd:option('-grad_clip',           5, 'clip gradients at this value')
+cmd:option('-grad_clip',           0, 'clip gradients at this value')
 cmd:option('-train_frac',       0.95, 'fraction of data that goes into train set')
 cmd:option('-val_frac',         0.05, 'fraction of data that goes into validation set')
 cmd:option('-snapshot',            1, 'Save a snapshot at every N epochs.')
@@ -67,6 +66,12 @@ cmd:option('-plot_graph',          1, 'Plots a graph of the training and test lo
 cmd:text()
 
 local opt = cmd:parse(arg or {})
+
+if opt.GPU > 0 then
+    opt.dtype = 'torch.CudaTensor'
+else
+    opt.dtype = 'torch.FloatTensor'
+end
 opt.num_layers = #opt.rnn_size
 opt.inputsize = opt.rnn_size[1]
 opt.hiddensize = opt.rnn_size
@@ -232,16 +237,26 @@ end
 
 -- copy sample buffer to GPU:
 local inputs, targets = torch.CudaTensor(), torch.CudaTensor()
-local split_targets = nn.SplitTable(1):cuda()
+
 engine.hooks.onSample = function(state)
     cutorch.synchronize(); collectgarbage();
     inputs:resize(state.sample.input:size() ):copy(state.sample.input)
     targets:resize(state.sample.target:size() ):copy(state.sample.target)
     state.sample.input  = inputs
-    state.sample.target = split_targets:forward(targets)
+    state.sample.target = targets:view(-1)  -- split_targets:forward(targets)
+
+    local N, T = inputs:size(1), inputs:size(2)
+    state.network.view1:resetSize(N * T, -1)
+    state.network.view2:resetSize(N, T, -1)
+    state.network.view3:resetSize(N * T, -1)
 
     timers.dataTimer:stop()
     timers.batchTimer:reset()
+end
+
+
+engine.hooks.onForward = function(state)
+    --print('aqui')
 end
 
 
@@ -277,7 +292,10 @@ local _, grads = model:parameters()
 
 engine.hooks.onBackward = function(state)
     -- clip gradients to prevent them from exploding
-    clipGradients(grads, opt.grad_clip)
+    --clipGradients(grads, opt.grad_clip)
+    if opt.grad_clip > 0 then
+        state.network:gradParamClip(opt.grad_clip)
+    end
 end
 
 
@@ -315,9 +333,12 @@ engine.hooks.onEndEpoch = function(state)
     ---------------------------
 
     if state.epoch % opt.snapshot == 0 then
-        local snapshot_filename = paths.concat(opt.save, ('model_epoch=%d_loss=%0.4f.t7'):format(state.epoch, ts_loss))
+        --local snapshot_filename = paths.concat(opt.save, ('model_epoch=%d_loss=%0.4f.t7'):format(state.epoch, ts_loss))
+        local snapshot_filename = paths.concat(opt.save, ('checkpoint_%d.t7'):format(state.epoch))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-        torch.save(snapshot_filename, {state.network, data})
+        state.network.view1:resetSize(1, -1)
+        state.network.view2:resetSize(1, 1, -1)
+        torch.save(snapshot_filename, {state.network.modules[1], data})
     end
 
     timers.epochTimer:reset()

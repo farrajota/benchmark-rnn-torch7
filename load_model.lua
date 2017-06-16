@@ -57,15 +57,15 @@ local function rnn_module(inputsize, hiddensize, opt)
 
     -- cudnn
     elseif str == 'rnnrelu_cudnn' then
-        return cudnn.RNNReLU(inputsize, hiddensize, 1)
+        return cudnn.RNNReLU(inputsize, hiddensize, 1, true)
     elseif str == 'rnntanh_cudnn' then
-        return cudnn.RNNTanh(inputsize, hiddensize, 1)
+        return cudnn.RNNTanh(inputsize, hiddensize, 1, true)
     elseif str == 'lstm_cudnn' then
-        return cudnn.LSTM(inputsize, hiddensize, 1)
+        return cudnn.LSTM(inputsize, hiddensize, 1, true)
     elseif str == 'blstm_cudnn' then
-        return cudnn.BLSTM(inputsize, hiddensize, 1)
+        return cudnn.BLSTM(inputsize, hiddensize, 1, true)
     elseif str == 'gru_cudnn' then
-        return cudnn.GRU(inputsize, hiddensize, 1)
+        return cudnn.GRU(inputsize, hiddensize, 1, true)
     else
         error('Invalid/Undefined model name: ' .. opt.model)
     end
@@ -95,38 +95,29 @@ end
 local function setup_model(vocab_size, opt)
     assert(opt, 'Missing input arg: options')
 
-    -- input layer (i.e. word embedding space)
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
-    lookup.maxOutNorm = -1 -- prevent weird maxnormout behaviour
-
-    -- rnn layers
-    local rnn_layers = setup_rnn_module(opt)
-
-    -- output layer
-    local classifier = nn.Sequential()
-    classifier:add(nn.Linear(opt.hiddensize[opt.num_layers], vocab_size))
-    classifier:add(nn.LogSoftMax())
+    local rnn = setup_rnn_module(opt)
+    local view1 = nn.View(1, 1, -1):setNumInputDims(3)
+    local view2 = nn.View(1, -1):setNumInputDims(2)
+    local view3 = nn.View(1, -1):setNumInputDims(3)
+    local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
     local model = nn.Sequential()
-    -- add input layer
     model:add(lookup)
-    if opt.dropout > 0 then
-        model:add(nn.Dropout(opt.dropout))
-    end
-    -- add rnn layers
-    if is_backend_cudnn(opt) then
-        model:add(rnn_layers)
-        model:add(nn.SplitTable(1))
-    else
-        model:add(nn.SplitTable(1)) -- tensor to table of tensors
-        -- encapsulate rnn layers into a Sequencer
-        model:add(nn.Sequencer(rnn_layers))
-    end
-    -- encapsulate classifier into a Sequencer
-    model:add(nn.Sequencer(classifier))
-    if not is_backend_cudnn(opt) then
-      -- remember previous state between batches
-      model:remember()
+    model:add(nn.Contiguous())
+    model:add(rnn)
+    model:add(nn.Contiguous())
+    model:add(view1)
+    model:add(lin)
+    model:add(view2)
+
+    -- monkey patch the forward function to reshape
+    -- the view modules before doing the forward pass
+    lookup.updateOutput_new = function(module, input)
+        local N, T = input:size(1), input:size(2)
+        model.view1:resetSize(N * T, -1)
+        model.view2:resetSize(N, T, -1)
+        return lookup:forward(input)
     end
 
     if opt.uniform > 0 then
@@ -138,14 +129,22 @@ local function setup_model(vocab_size, opt)
     print('==> Print model to screen:')
     print(model)
 
-    return model
+    local modelOut = nn.Sequential()
+    modelOut:add(model)
+    modelOut:add(view3)
+    modelOut.view1 = view1
+    modelOut.view2 = view2
+    modelOut.view3 = view3
+
+    return modelOut
 end
 
 ------------------------------------------------------------------------------------------------------------
 
 local function setup_criterion()
-    local crit = nn.ClassNLLCriterion()
-    local criterion = nn.SequencerCriterion(crit)
+    --local crit = nn.ClassNLLCriterion()
+    --local criterion = nn.SequencerCriterion(crit)
+    local criterion = nn.CrossEntropyCriterion()
     return criterion
 end
 
@@ -158,8 +157,8 @@ function load_model_criterion(vocab_size, opt)
     local model = setup_model(vocab_size, opt)
     local criterion = setup_criterion()
 
-    model:cuda()
-    criterion:cuda()
+    model = model:type(opt.dtype)
+    criterion = criterion:type(opt.dtype)
 
     return model, criterion
 end

@@ -21,7 +21,7 @@ cmd:text('Sample from a character-level language model.')
 cmd:text()
 cmd:text('Options')
 -- required:
-cmd:argument('-model', 'model checkpoint to use for sampling')
+cmd:option('-model', 'model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-manualSeed',   2,'random number generator\'s seed')
 cmd:option('-sample',       1,' 0 to use max at each timestep, 1 to sample at each timestep')
@@ -39,9 +39,12 @@ torch.manualSeed(opt.manualSeed)
 -- Model
 --------------------------------------------------------------------------------
 
+opt.model = '/home/mf/Toolkits/Codigo/git/benchmark-rnn-torch7/data/exp/shakespear/length=50_lstm_cudnn_size=256_nlayers=2_dropout=0.00/checkpoint_1.t7'
 local checkpoint = torch.load(opt.model)
 local model = checkpoint[1]
 model:evaluate()
+print('Model:')
+print(model)
 
 
 --------------------------------------------------------------------------------
@@ -98,7 +101,7 @@ for i=1, opt.length do
 
     -- forward the rnn for next character
     local lst = model:forward(prev_char:view(1,1))
-    prediction = lst[#lst] -- last element holds the log probabilities
+    prediction = lst:squeeze() --lst[#lst] -- last element holds the log probabilities
 
     io.write(ivocab[prev_char[1]])
 end

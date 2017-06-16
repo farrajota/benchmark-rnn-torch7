@@ -148,9 +148,11 @@ function load_data(opt)
     local ydata = data:clone()
     ydata:sub(1,-2):copy(data:sub(2,-1))
     ydata[-1] = data[1]
-    out.x_batches =  data:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
+    out.x_batches = data:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
+    --out.x_batches =  data:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
     out.nbatches = #out.x_batches
-    out.y_batches = ydata:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
+    out.y_batches = ydata:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
+    --out.y_batches = ydata:view(batch_size, -1):transpose(1,2):split(seq_length, 1)
     assert(#out.x_batches == #out.y_batches)
 
     -- lets try to be helpful here
