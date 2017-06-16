@@ -72,7 +72,7 @@ for i=1, #optim_configs do
     epoch_loss:close()
 
     -- concat logs
-    local optim_name = string.format('%s_LR=%0e_LRdecay=%0.4f_Weightdecay=%0.4f',
+    local optim_name = string.format('%s_LR=%2.2e_LRdecay=%0.4f_Weightdecay=%0.4f',
             optim_configs[i].optimizer, optim_configs[i].lr,
             optim_configs[i].learningRateDecay, optim_configs[i].weightDecay)
         torch.FloatTensor(train_loss),
