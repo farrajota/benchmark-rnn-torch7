@@ -73,56 +73,59 @@ end
 
 ------------------------------------------------------------------------------------------------------------
 
-local function setup_rnn_module(opt)
-    local rnn_layers = nn.Sequential()
-    local inputsize = opt.inputsize
-    for i, hiddensize in ipairs(opt.hiddensize) do
-        -- add module to the network
-        rnn_layers:add(rnn_module(inputsize, hiddensize, opt))
-
-        -- add dropout (if enabled)
-        if opt.dropout > 0 then
-            rnn_layers:add(nn.Dropout(opt.dropout))
-        end
-
-        inputsize = hiddensize
-    end
-    return rnn_layers
-end
-
-------------------------------------------------------------------------------------------------------------
-
 local function setup_model(vocab_size, opt)
     assert(opt, 'Missing input arg: options')
 
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
-    local rnn = setup_rnn_module(opt)
+    local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)
     local view2 = nn.View(1, -1):setNumInputDims(2)
-    local view3 = nn.View(1, -1):setNumInputDims(3)
+    local view3 = nn.View(opt.batchSize * opt.seq_length, -1):setNumInputDims(3)
     local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
     local model = nn.Sequential()
     model:add(lookup)
     model:add(nn.Contiguous())
-    model:add(rnn)
+    local inputsize = opt.inputsize
+    for i, hiddensize in ipairs(opt.hiddensize) do
+        -- add module to the network
+        local rnn_layer = rnn_module(inputsize, hiddensize, opt)
+        model:add(rnn_layer)
+        table.insert(rnns, rnn_layer)
+
+        -- add dropout (if enabled)
+        if opt.dropout > 0 then
+            model:add(nn.Dropout(opt.dropout))
+        end
+
+        inputsize = hiddensize
+    end
     model:add(nn.Contiguous())
     model:add(view1)
     model:add(lin)
     model:add(view2)
-
-    -- monkey patch the forward function to reshape
-    -- the view modules before doing the forward pass
-    lookup.updateOutput_new = function(module, input)
-        local N, T = input:size(1), input:size(2)
-        model.view1:resetSize(N * T, -1)
-        model.view2:resetSize(N, T, -1)
-        return lookup:forward(input)
-    end
+    model.view1 = view1
+    model.view2 = view2
+    model.rnns = rnns
 
     if opt.uniform > 0 then
         for k,param in ipairs(model:parameters()) do
             param:uniform(-opt.uniform, opt.uniform)
+        end
+    end
+
+    -- monkey patch the forward function to reshape
+    -- the view modules before doing the forward pass
+    function model:forward(input)
+        local N, T = input:size(1), input:size(2)
+        self.view1:resetSize(N * T, -1)
+        self.view2:resetSize(N, T, -1)
+        return self:updateOutput(input)
+    end
+
+    function model:resetStates()
+        for i, rnn in ipairs(self.rnns) do
+            rnn:resetStates()
         end
     end
 
