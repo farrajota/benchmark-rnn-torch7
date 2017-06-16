@@ -13,6 +13,8 @@ local function is_dataset_valid(dataset)
 
     if dataset == 'shakespear' then
         return true
+    elseif dataset == 'tinyshakespear' then
+        return true
     elseif dataset == 'linux' then
         return true
     elseif dataset == 'wikipedia' then
