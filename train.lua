@@ -57,7 +57,7 @@ cmd:text()
 cmd:option('-nEpochs',            10, 'Number of epochs for train.')
 cmd:option('-seq_length',         50, 'number of timesteps to unroll for')
 cmd:option('-batchSize',          64, 'number of samples per batch')
-cmd:option('-grad_clip',           0, 'clip gradients at this value')
+cmd:option('-grad_clip',           5, 'clip gradients at this value')
 cmd:option('-train_frac',       0.95, 'fraction of data that goes into train set')
 cmd:option('-val_frac',         0.05, 'fraction of data that goes into validation set')
 cmd:option('-snapshot',            1, 'Save a snapshot at every N epochs.')
@@ -255,11 +255,6 @@ engine.hooks.onSample = function(state)
 end
 
 
-engine.hooks.onForward = function(state)
-    --print('aqui')
-end
-
-
 engine.hooks.onForwardCriterion = function(state)
 
     local iters
@@ -308,6 +303,7 @@ engine.hooks.onEndEpoch = function(state)
     local tr_loss = meters.train_err:value()
     meters:reset()
     state.t = 0
+    state.network.modules[1]:resetStates()
 
 
     ---------------------
@@ -324,21 +320,24 @@ engine.hooks.onEndEpoch = function(state)
     }
     local ts_loss = meters.test_err:value()
     print(('Test Loss: %0.5f'):format(meters.test_err:value() ))
+    state.network.modules[1]:resetStates()
 
+
+    ---------------------
+    -- Log losses
+    ---------------------
 
     loggers.epoch_loss:add{tr_loss, ts_loss}
+
 
     ---------------------------
     -- save network to disk
     ---------------------------
 
     if state.epoch % opt.snapshot == 0 then
-        --local snapshot_filename = paths.concat(opt.save, ('model_epoch=%d_loss=%0.4f.t7'):format(state.epoch, ts_loss))
         local snapshot_filename = paths.concat(opt.save, ('checkpoint_%d.t7'):format(state.epoch))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-        state.network.view1:resetSize(1, -1)
-        state.network.view2:resetSize(1, 1, -1)
-        torch.save(snapshot_filename, {state.network.modules[1], data})
+        torch.save(snapshot_filename, {state.network.modules[1]:clearState(), data})
     end
 
     timers.epochTimer:reset()
