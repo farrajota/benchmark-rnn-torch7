@@ -9,6 +9,8 @@ require 'cudnn'
 require 'rnn'
 require 'nngraph'
 
+require 'LSTM'
+
 
 ------------------------------------------------------------------------------------------------------------
 
@@ -36,6 +38,7 @@ local function rnn_module(inputsize, hiddensize, opt)
     assert(hiddensize)
     assert(opt)
 
+    local rnn
     local str = string.lower(opt.model)
     -- rnn
     if str == 'rnn_rnn' then
@@ -45,30 +48,39 @@ local function rnn_module(inputsize, hiddensize, opt)
                 :add(nn.Linear(hiddensize, hiddensize))) -- recurrent layer
             :add(nn.CAddTable()) -- merge
             :add(nn.Sigmoid()) -- transfer
-        return nn.Recurrence(rm, hiddensize, 1)
+        rnn = nn.Recurrence(rm, hiddensize, 1)
+    elseif str == 'lstm2_rnn' then
+        rnn = nn.LSTM2(inputsize, hiddensize)
+        rnn.remember_states = true
     elseif str == 'lstm_rnn' then
-        return nn.LSTM(inputsize, hiddensize)
+        rnn =  nn.LSTM(inputsize, hiddensize)
     elseif str == 'fastlstm_rnn' then
         nn.FastLSTM.usenngraph = true -- faster
         nn.FastLSTM.bn = opt.bn
-        return nn.FastLSTM(inputsize, hiddensize)
+        rnn = nn.FastLSTM(inputsize, hiddensize)
     elseif str == 'gru_rnn' then
-        return nn.GRU(inputsize, hiddensize)
+        rnn =  nn.GRU(inputsize, hiddensize)
 
     -- cudnn
     elseif str == 'rnnrelu_cudnn' then
-        return cudnn.RNNReLU(inputsize, hiddensize, 1, true)
+        rnn = cudnn.RNNReLU(inputsize, hiddensize, 1, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
     elseif str == 'rnntanh_cudnn' then
-        return cudnn.RNNTanh(inputsize, hiddensize, 1, true)
+        rnn = cudnn.RNNTanh(inputsize, hiddensize, 1, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
     elseif str == 'lstm_cudnn' then
-        return cudnn.LSTM(inputsize, hiddensize, 1, true)
+        rnn = cudnn.LSTM(inputsize, hiddensize, 1, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
     elseif str == 'blstm_cudnn' then
-        return cudnn.BLSTM(inputsize, hiddensize, 1, true)
+        rnn = cudnn.BLSTM(inputsize, hiddensize, 1, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
     elseif str == 'gru_cudnn' then
-        return cudnn.GRU(inputsize, hiddensize, 1, true)
+        rnn = cudnn.GRU(inputsize, hiddensize, 1, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
     else
         error('Invalid/Undefined model name: ' .. opt.model)
     end
+    return rnn
 end
 
 ------------------------------------------------------------------------------------------------------------
@@ -89,15 +101,17 @@ local function setup_model(vocab_size, opt)
     local inputsize = opt.inputsize
     for i, hiddensize in ipairs(opt.hiddensize) do
         -- add module to the network
-        local rnn_layer = rnn_module(inputsize, hiddensize, opt)
-        model:add(rnn_layer)
-        table.insert(rnns, rnn_layer)
 
-        -- add dropout (if enabled)
-        if opt.dropout > 0 then
-            model:add(nn.Dropout(opt.dropout))
+        local rnn = rnn_module(inputsize, hiddensize, opt)
+        model:add(rnn)
+
+        if is_backend_cudnn(opt) then
+            if opt.dropout > 0 then
+                model:add(nn.Dropout(opt.dropout))
+            end
         end
 
+        table.insert(rnns, rnn)
         inputsize = hiddensize
     end
     model:add(nn.Contiguous())
