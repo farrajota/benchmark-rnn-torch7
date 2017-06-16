@@ -28,6 +28,7 @@ cmd:text('Options')
 cmd:text()
 cmd:text(' ---------- General options ------------------------------------')
 cmd:text()
+cmd:option('-expID',  '', 'Experiment ID')
 cmd:option('-dataset',  'shakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
 cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
@@ -35,12 +36,14 @@ cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
 cmd:option('-model',   'lstm_cudnn', 'Name of the model (see load_model.lua file for more information).')
-cmd:option('-rnn_size',   {256, 256}, 'size of RNN\'s internal state')
+cmd:option('-rnn_size',  {256, 256}, 'size of RNN\'s internal state')
 cmd:option('-bn', false, 'Use batch normalization. Only supported with fastlstm')
-cmd:option('-uniform',   0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
+cmd:option('-dropout',            0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-uniform',          0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
 cmd:text()
 cmd:text(' ---------- Hyperparameter options -----------------------------')
 cmd:text()
+cmd:option('-optimizer',      'adam', 'Network optimizer:  adam | rmsprop | sgd | adadelta | adagrad.')
 cmd:option('-LR',               1e-3, 'Learning rate')
 cmd:option('-LRdecay',           0.0, 'Learning rate decay')
 cmd:option('-momentum',          0.0, 'Momentum')
@@ -52,24 +55,25 @@ cmd:option('-LR_reduce_factor',   5, 'Reduce the learning rate by a factor.')
 cmd:text()
 cmd:text(' ---------- Train options --------------------------------------')
 cmd:text()
-cmd:option('-optimizer',      'adam', 'Network optimizer:  adam | rmsprop | sgd | adadelta | adagrad.')
-cmd:option('-nEpochs',            30, 'Number of epochs for train.')
+cmd:option('-nEpochs',            3, 'Number of epochs for train.')
 cmd:option('-seq_length',         50, 'number of timesteps to unroll for')
-cmd:option('-batchSize',          32, 'number of samples per batch')
-cmd:option('-dropout',             0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-batchSize',          64, 'number of samples per batch')
 cmd:option('-grad_clip',           5, 'clip gradients at this value')
 cmd:option('-train_frac',       0.95, 'fraction of data that goes into train set')
 cmd:option('-val_frac',         0.05, 'fraction of data that goes into validation set')
 cmd:option('-snapshot',            1, 'Save a snapshot at every N epochs.')
 cmd:option('-print_every',        50, 'Print the loss at every N steps.')
+cmd:option('-plot_graph',          1, 'Plots a graph of the training and test losses. (1-true | 0-false)')
 cmd:text()
 
 local opt = cmd:parse(arg or {})
 opt.num_layers = #opt.rnn_size
 opt.inputsize = opt.rnn_size[1]
 opt.hiddensize = opt.rnn_size
-opt.save = paths.concat('data/exp/', string.format('%s_length=%d_%s_size=%s_nlayers=%s_dropout=%0.2f',
-           opt.dataset, opt.seq_length, opt.model, opt.rnn_size[1], opt.num_layers, opt.dropout))
+opt.expID = (opt.expID ~= '' and opt.expID) or
+            string.format('length=%d_%s_size=%s_nlayers=%s_dropout=%0.2f',
+            opt.seq_length, opt.model, opt.rnn_size[1], opt.num_layers, opt.dropout)
+opt.save = paths.concat('data/exp/', opt.dataset, opt.expID)
 
 torch.manualSeed(opt.manualSeed)
 
@@ -194,18 +198,18 @@ function meters:reset()
 end
 
 local loggers = {
-    test = optim.Logger(paths.concat(opt.save,'test.log'), opt.continue),
-    train = optim.Logger(paths.concat(opt.save,'train.log'), opt.continue),
+    full_test = optim.Logger(paths.concat(opt.save,'full_test.log'), opt.continue),
     full_train = optim.Logger(paths.concat(opt.save,'full_train.log'), opt.continue),
+    epoch_loss = optim.Logger(paths.concat(opt.save,'epoch_loss.log'), opt.continue),
 }
 
-loggers.test:setNames{'Test Loss'}
-loggers.train:setNames{'Train Loss'}
+loggers.full_test:setNames{'Test Loss'}
 loggers.full_train:setNames{'Train Loss'}
+loggers.epoch_loss:setNames{'Train Loss', 'Test Loss'}
 
-loggers.test.showPlot = false
-loggers.train.showPlot = false
+loggers.full_test.showPlot = false
 loggers.full_train.showPlot = false
+loggers.epoch_loss.showPlot = false
 
 
 -- set up training engine:
@@ -247,9 +251,11 @@ engine.hooks.onForwardCriterion = function(state)
     if state.training then
         iters = trainIters
         meters.train_err:add(state.criterion.output)
+        loggers.full_train:add{state.criterion.output}
     else
         iters = trainIters
         meters.test_err:add(state.criterion.output)
+        loggers.full_test:add{state.criterion.output}
     end
 
     -- display train info
@@ -282,7 +288,6 @@ engine.hooks.onEndEpoch = function(state)
 
     print(('Train Loss: %0.5f'):format(meters.train_err:value() ))
     local tr_loss = meters.train_err:value()
-    loggers.train:add{tr_loss}
     meters:reset()
     state.t = 0
 
@@ -300,9 +305,10 @@ engine.hooks.onEndEpoch = function(state)
         criterion = criterion,
     }
     local ts_loss = meters.test_err:value()
-    loggers.test:add{ts_loss}
     print(('Test Loss: %0.5f'):format(meters.test_err:value() ))
 
+
+    loggers.epoch_loss:add{tr_loss, ts_loss}
 
     ---------------------------
     -- save network to disk
@@ -332,5 +338,17 @@ engine:train{
     config = optimState(1),
     maxepoch = opt.nEpochs
 }
+
+
+--------------------------------------------------------------------------------
+-- Plots
+--------------------------------------------------------------------------------
+
+if opt.plot_graph > 0 then
+    print('==> Plot loss graphs')
+    loggers.full_test:style{'+-', '+-'}; loggers.full_test:plot()
+    loggers.full_train:style{'+-', '+-'}; loggers.full_train:plot()
+    loggers.epoch_loss:style{'-', '-'}; loggers.epoch_loss:plot()
+end
 
 print('==> Script Complete.')
