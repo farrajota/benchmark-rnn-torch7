@@ -9,6 +9,10 @@ require 'string'
 require 'gnuplot'
 
 
+--------------------------------------------------------------------------------
+-- Set experiments configs
+--------------------------------------------------------------------------------
+
 local dataset = 'shakespear'
 
 local optim_configs = {
@@ -26,7 +30,10 @@ local optim_configs = {
 }
 
 
---[[ Train networks]]
+--------------------------------------------------------------------------------
+-- Train networks
+--------------------------------------------------------------------------------
+
 for i=1, #optim_configs do
     local str_args = ''
     for k, v in pairs(optim_configs[i]) do
@@ -40,7 +47,10 @@ for i=1, #optim_configs do
 end
 
 
---[[ Combine all tests results into a plot ]]
+--------------------------------------------------------------------------------
+-- Combine all tests results into a plot
+--------------------------------------------------------------------------------
+
 local loss_exp = {}
 for i=1, #optim_configs do
     local expID = optim_configs[i].expID
@@ -73,7 +83,10 @@ for i=1, #optim_configs do
 end
 
 
---[[ Plot losses ]]
+--------------------------------------------------------------------------------
+-- Plot losses
+--------------------------------------------------------------------------------
+
 local fname = paths.concat('data/exp/', 'test_optimizers.png')
 gnuplot.pngfigure('plot_labels.png')
 gnuplot.title('Loss of several different optimizers for ' .. dataset)
