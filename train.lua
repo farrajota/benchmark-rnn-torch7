@@ -29,7 +29,7 @@ cmd:text()
 cmd:text(' ---------- General options ------------------------------------')
 cmd:text()
 cmd:option('-expID',  '', 'Experiment ID')
-cmd:option('-dataset',  'shakespear', 'Dataset choice: shakespear | linux | wikipedia.')
+cmd:option('-dataset',  'tinyshakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
 cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
@@ -237,18 +237,26 @@ end
 
 -- copy sample buffer to GPU:
 local inputs, targets = torch.CudaTensor(), torch.CudaTensor()
-
+local split_table = nn.SplitTable(1):type(opt.dtype)
 engine.hooks.onSample = function(state)
     cutorch.synchronize(); collectgarbage();
     inputs:resize(state.sample.input:size() ):copy(state.sample.input)
     targets:resize(state.sample.target:size() ):copy(state.sample.target)
     state.sample.input  = inputs
-    state.sample.target = targets:view(-1)  -- split_targets:forward(targets)
+    state.sample.target = targets  -- split_targets:forward(targets)
 
-    local N, T = inputs:size(1), inputs:size(2)
-    state.network.view1:resetSize(N * T, -1)
-    state.network.view2:resetSize(N, T, -1)
-    state.network.view3:resetSize(N * T, -1)
+    -- if the model outputs a tensor,
+    -- the inputs must be reshapen during
+    -- train to make things easier.
+    if opt.nested_model then
+        local N, T = inputs:size(1), inputs:size(2)
+        state.network.view1:resetSize(N * T, -1)
+        state.network.view2:resetSize(N, T, -1)
+        state.network.view3:resetSize(N * T, -1)
+        state.sample.target = state.sample.target:view(-1)
+    else
+        state.sample.target = split_table:forward(state.sample.target)
+    end
 
     timers.dataTimer:stop()
     timers.batchTimer:reset()
@@ -283,8 +291,7 @@ engine.hooks.onUpdate = function(state)
 end
 
 
-local _, grads = model:parameters()
-
+--local _, grads = model:parameters()
 engine.hooks.onBackward = function(state)
     -- clip gradients to prevent them from exploding
     --clipGradients(grads, opt.grad_clip)
@@ -303,7 +310,7 @@ engine.hooks.onEndEpoch = function(state)
     local tr_loss = meters.train_err:value()
     meters:reset()
     state.t = 0
-    state.network.modules[1]:resetStates()
+    --state.network.modules[1]:resetStates()
 
 
     ---------------------
@@ -320,7 +327,7 @@ engine.hooks.onEndEpoch = function(state)
     }
     local ts_loss = meters.test_err:value()
     print(('Test Loss: %0.5f'):format(meters.test_err:value() ))
-    state.network.modules[1]:resetStates()
+    --state.network.modules[1]:resetStates()
 
 
     ---------------------
