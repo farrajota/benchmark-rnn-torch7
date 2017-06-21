@@ -1,5 +1,26 @@
 --[[
-    Setup/load a model.
+    Setup/load a model using different backends.
+
+    List of available models+backends:
+        (backend: nngraph)
+        - rnn_vanilla
+        - lstm_vanilla
+
+        (backend: cudnn)
+        - rnnrelu_cudnn
+        - rnntanh_cudnn
+        - lstm_cudnn
+        - blstm_cudnn
+        - gru_cudnn
+
+        (backend: rnn (Element-Research))
+        - rnn_rnn
+        - lstm_rnn
+        - fastlstm_rnn
+        - gru_rnn
+
+        (backend: rnnlib (facebook))
+        - TODO
 ]]
 
 
@@ -14,7 +35,7 @@ paths.dofile('modules/LSTM.lua')
 
 ------------------------------------------------------------------------------------------------------------
 
-local function error_model()
+local function error_msg_model()
     error('Invalid model name/type: ' .. opt.model)
 end
 
@@ -31,7 +52,7 @@ local function backend_type(opt)
     elseif str:find('_vanilla') then
         return 'vanilla'
     else
-        error_model()
+        error_msg_model()
     end
 end
 
@@ -72,7 +93,7 @@ local function setup_model_vanilla(opt)
             rnn = nn.VanillaLSTM(inputsize, hiddensize)
             rnn.remember_states = true
         else
-            error_model()
+            error_msg_model()
         end
         model:add(rnn)
 
@@ -168,7 +189,7 @@ local function setup_model_rnn(opt)
         elseif str == 'gru_rnn' then
             rnn = nn.GRU(inputsize, hiddensize)
         else
-            error_model()
+            error_msg_model()
         end
 
         stepmodule:add(rnn)
@@ -245,7 +266,7 @@ local function setup_model_cudnn(opt)
             rnn = cudnn.GRU(inputsize, hiddensize, 1, true, opt.dropout, true)
             rnn:resetDropoutDescriptor()
         else
-            error_model()
+            error_msg_model()
         end
         model:add(rnn)
 
@@ -317,6 +338,7 @@ function load_model_criterion(vocab_size, opt)
         model, criterion = setup_model_rnnlib(opt)
     elseif backend_t == 'cudnn' then
         model, criterion = setup_model_cudnn(opt)
+        opt.dtype = 'torch.CudaTensor'
     else
         error('Invalid backend: ' .. opt.model)
     end
@@ -324,8 +346,8 @@ function load_model_criterion(vocab_size, opt)
     print('==> Print model to screen:')
     print(model)
 
-    model = model:type(opt.dtype)
-    criterion = criterion:type(opt.dtype)
+    model:type(opt.dtype)
+    criterion:type(opt.dtype)
 
     return model, criterion
 end
