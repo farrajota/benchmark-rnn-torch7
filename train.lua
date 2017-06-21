@@ -31,7 +31,7 @@ cmd:text()
 cmd:option('-expID',       'rnn-vanilla', 'Experiment ID')
 cmd:option('-dataset',  'tinyshakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
-cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
+cmd:option('-GPU',        -1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
@@ -71,6 +71,8 @@ cmd:text()
 local opt = cmd:parse(arg or {})
 
 if opt.GPU > 0 then
+    require 'cutorch'
+    require 'cunn'
     opt.dtype = 'torch.CudaTensor'
 else
     opt.dtype = 'torch.FloatTensor'
@@ -243,10 +245,13 @@ end
 
 
 -- copy sample buffer to GPU:
-local inputs, targets = torch.CudaTensor(), torch.CudaTensor()
+local inputs, targets = torch.Tensor():type(opt.dtype), torch.Tensor():type(opt.dtype)
 local split_table = nn.SplitTable(1):type(opt.dtype)
 engine.hooks.onSample = function(state)
-    cutorch.synchronize(); collectgarbage();
+    if opt.dtype == 'torch.CudaTensor' then
+      cutorch.synchronize();
+    end
+    collectgarbage();
     inputs:resize(state.sample.input:size() ):copy(state.sample.input)
     targets:resize(state.sample.target:size() ):copy(state.sample.target)
     state.sample.input  = inputs
