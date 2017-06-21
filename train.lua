@@ -241,6 +241,7 @@ engine.hooks.onStartEpoch = function(state)
     print('**********************************************')
     state.config = optimState(state.epoch+1)
     timers.epochTimer:reset()
+    state.network:training() -- ensure the model is set to training mode
 end
 
 
@@ -356,7 +357,7 @@ engine.hooks.onEndEpoch = function(state)
     if state.epoch % opt.snapshot == 0 then
         local snapshot_filename = paths.concat(opt.save, ('checkpoint_%d.t7'):format(state.epoch))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-        torch.save(snapshot_filename, {state.network.modules[1]:clearState(), data})
+        torch.save(snapshot_filename, {state.network:clearState(), data})
     end
 
     timers.epochTimer:reset()
