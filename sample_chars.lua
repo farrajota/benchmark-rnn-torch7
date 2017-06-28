@@ -5,6 +5,9 @@
 require 'paths'
 require 'torch'
 require 'string'
+require 'nn'
+require 'cunn'
+require 'cudnn'
 
 paths.dofile('load_model.lua')
 
@@ -92,9 +95,10 @@ for i=1, opt.length do
     end
 
     -- forward the rnn for next character
-
     prediction = model:forward(next_char:view(1,1):cuda())
-    --prediction = lst --lst[#lst] -- last element holds the log probabilities
+    if type(prediction) == 'table' then
+        prediction = prediction[#prediction]  -- last element holds the log probabilities
+    end
 
     io.write(ivocab[next_char[1]])
 end
