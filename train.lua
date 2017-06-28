@@ -31,7 +31,7 @@ cmd:text()
 cmd:option('-expID',       'rnn-vanilla', 'Experiment ID')
 cmd:option('-dataset',  'tinyshakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
-cmd:option('-GPU',        -1, 'Default preferred GPU, if set to -1: no GPU')
+cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
@@ -125,8 +125,13 @@ end
 -- Model + Loss criterion
 --------------------------------------------------------------------------------
 
-local model, criterion = load_model_criterion(data.vocab_size, opt)
+local model, criterion, is_nested = load_model_criterion(data.vocab_size, opt)
 
+print('==> Print model to screen:')
+print(model)
+
+model:type(opt.dtype)
+criterion:type(opt.dtype)
 
 --------------------------------------------------------------------------------
 -- Optimizer
@@ -250,25 +255,27 @@ local inputs, targets = torch.Tensor():type(opt.dtype), torch.Tensor():type(opt.
 local split_table = nn.SplitTable(1):type(opt.dtype)
 engine.hooks.onSample = function(state)
     if opt.dtype == 'torch.CudaTensor' then
-      cutorch.synchronize();
+        cutorch.synchronize();
     end
     collectgarbage();
     inputs:resize(state.sample.input:size() ):copy(state.sample.input)
     targets:resize(state.sample.target:size() ):copy(state.sample.target)
     state.sample.input  = inputs
-    state.sample.target = targets  -- split_targets:forward(targets)
+    state.sample.target = targets
 
-    -- if the model outputs a tensor,
-    -- the inputs must be reshapen during
-    -- train to make things easier.
-    if opt.nested_model then
+    if is_nested then
+        -- Here it is used a tensor reshaping strategy to simplify
+        -- the training process. These reshapes will not be necessary
+        -- after the model is trained and will be automatically set
+        -- by the monkey-patched forward pass
         local N, T = inputs:size(1), inputs:size(2)
         state.network.view1:resetSize(N * T, -1)
         state.network.view2:resetSize(N, T, -1)
         state.network.view3:resetSize(N * T, -1)
         state.sample.target = state.sample.target:view(-1)
     else
-        state.sample.target = split_table:forward(state.sample.target)
+        -- no need to reshape tensors
+        state.sample.target = split_targets:forward(targets)
     end
 
     timers.dataTimer:stop()
@@ -323,7 +330,7 @@ engine.hooks.onEndEpoch = function(state)
     local tr_loss = meters.train_err:value()
     meters:reset()
     state.t = 0
-    --state.network.modules[1]:resetStates()
+    state.network:resetStates()
 
 
     ---------------------
@@ -340,7 +347,7 @@ engine.hooks.onEndEpoch = function(state)
     }
     local ts_loss = meters.test_err:value()
     print(('Test Loss: %0.5f'):format(meters.test_err:value() ))
-    --state.network.modules[1]:resetStates()
+    state.network:resetStates()
 
 
     ---------------------
@@ -357,7 +364,10 @@ engine.hooks.onEndEpoch = function(state)
     if state.epoch % opt.snapshot == 0 then
         local snapshot_filename = paths.concat(opt.save, ('checkpoint_%d.t7'):format(state.epoch))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-        torch.save(snapshot_filename, {state.network:clearState(), data})
+
+        local save_model = state.network
+        if is_nested then save_model = state.network.modules[1] end
+        torch.save(snapshot_filename, {save_model:clearState(), data})
     end
 
     timers.epochTimer:reset()
