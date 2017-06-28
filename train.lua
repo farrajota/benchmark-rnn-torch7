@@ -85,6 +85,11 @@ opt.expID = (opt.expID ~= '' and opt.expID) or
             opt.seq_length, opt.model, opt.rnn_size[1], opt.num_layers, opt.dropout)
 opt.save = paths.concat('data/exp/', opt.dataset, opt.expID)
 
+if not paths.dirp(opt.save) then
+    print('Creating directory: ' .. opt.save)
+    os.execute('mkdir -p ' .. opt.save)
+end
+
 torch.manualSeed(opt.manualSeed)
 
 
@@ -126,12 +131,14 @@ end
 --------------------------------------------------------------------------------
 
 local model, criterion, backend = load_model_criterion(data.vocab_size, opt)
+opt.backend = backend
 
 print('==> Print model to screen:')
 print(model)
 
 model:type(opt.dtype)
 criterion:type(opt.dtype)
+
 
 --------------------------------------------------------------------------------
 -- Optimizer
@@ -172,6 +179,12 @@ local function optimState(epoch)
 end
 
 
+--------------------------------------------------------------------------------
+-- Save options to disk
+--------------------------------------------------------------------------------
+
+print('Saving configurations to disk: ' .. paths.concat(opt.save, 'configs.t7'))
+torch.save(paths.concat(opt.save, 'configs.t7'), opt)
 
 
 --------------------------------------------------------------------------------
