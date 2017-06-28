@@ -25,8 +25,6 @@
 
 
 require 'nn'
-require 'cunn'
-require 'cudnn'
 require 'rnn'
 require 'nngraph'
 
@@ -41,40 +39,28 @@ end
 
 ------------------------------------------------------------------------------------------------------------
 
-local function backend_type(opt)
-    local str = string.lower(opt.model)
-    if str:find('_cudnn') then
-        return 'cudnn'
-    elseif str:find('_rnn') then
-        return 'rnn'
-    elseif str:find('_rnn') then
-        return 'rnnlib'
-    elseif str:find('_vanilla') then
-        return 'vanilla'
-    else
-        error_msg_model()
-    end
-end
-
-------------------------------------------------------------------------------------------------------------
-
---[[ Define the criterion used for optimization]]
+--[[ Define the criterion used for optimization ]]--
 local function setup_criterion()
     return nn.CrossEntropyCriterion()
 end
 
-------------------------------------------------------------------------------------------------------------
 
-local function setup_model_vanilla(opt)
+--------------------------------------------------------------------------------
+-- Vanilla modules
+--------------------------------------------------------------------------------
+
+local function setup_model_vanilla(vocab_size, opt)
+    assert(vocab_size)
     assert(opt, 'Missing input arg: options')
 
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
     local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)
     local view2 = nn.View(1, -1):setNumInputDims(2)
-    local view3 = nn.View(opt.batchSize * opt.seq_length, -1):setNumInputDims(3)
+    local view3 = nn.View(1, 1, -1):setNumInputDims(3)
     local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
+    -- set network
     local model = nn.Sequential()
     model:add(lookup)
     if opt.dropout > 0 then
@@ -114,10 +100,17 @@ local function setup_model_vanilla(opt)
     -- monkey patch the forward function to reshape
     -- the view modules before doing the forward pass
     function model:forward(input)
-        local N, T = input:size(1), input:size(2)
-        self.view1:resetSize(N * T, -1)
-        self.view2:resetSize(N, T, -1)
-        return self:updateOutput(input)
+        if self.mode_train then
+            local N, T = input:size(1), input:size(2)
+            self.view1:resetSize(N * T, -1)
+            self.view2:resetSize(N * T, -1)
+            return self:updateOutput(input)
+        else
+            local N, T = input:size(1), input:size(2)
+            self.view1:resetSize(N * T, -1)
+            self.view2:resetSize(N * T, -1)
+            return self:updateOutput(input)
+        end
     end
 
     function model:resetStates()
@@ -127,32 +120,37 @@ local function setup_model_vanilla(opt)
     end
 
 
+    -- Nest the model in order to be easier to train (lazy way)
+    -- Note: the final view reshape reduces some headaches
+    --       with torchnet + tensor reshaping of the criterion.
+    local is_nested = true
     local modelOut = nn.Sequential()
     modelOut:add(model)
     modelOut:add(view3)
     modelOut.view1 = view1
     modelOut.view2 = view2
     modelOut.view3 = view3
+    modelOut.rnns = rnns
 
-    function modelOut:forward(input)
-        local N, T = input:size(1), input:size(2)
-        self.view1:resetSize(N * T, -1)
-        self.view2:resetSize(N, T, -1)
-        self.view3:resetSize(N * T, -1)
-        return self:updateOutput(input)
+    function modelOut:resetStates()
+        for i, rnn in ipairs(self.rnns) do
+            rnn:resetStates()
+        end
     end
 
+    -- set criterion
     local criterion = setup_criterion()
 
-    opt.nested_model = true  -- flag indicating the model is nested.
-                             -- If true, save only the first model module.
-
-    return modelOut, criterion
+    return modelOut, criterion, is_nested
 end
 
-------------------------------------------------------------------------------------------------------------
 
-local function setup_model_rnn(opt)
+--------------------------------------------------------------------------------
+-- RNN lib (Element-Research)
+--------------------------------------------------------------------------------
+
+local function setup_model_rnn(vocab_size, opt)
+    assert(vocab_size)
     assert(opt, 'Missing input arg: options')
 
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
@@ -164,7 +162,7 @@ local function setup_model_rnn(opt)
     if opt.dropout > 0 then
         model:add(nn.Dropout(opt.dropout))
     end
-    model:add((nn.SplitTable(1))
+    model:add(nn.SplitTable(1))
 
     local stepmodule = nn.Sequential()
     local inputsize = opt.inputsize
@@ -215,9 +213,13 @@ local function setup_model_rnn(opt)
     return model, criterion
 end
 
-------------------------------------------------------------------------------------------------------------
 
-local function setup_model_rnnlib(opt)
+--------------------------------------------------------------------------------
+-- RNN lib (facebook)
+--------------------------------------------------------------------------------
+
+local function setup_model_rnnlib(vocab_size, opt)
+    assert(vocab_size)
     assert(opt, 'Missing input arg: options')
 
     local criterion = setup_criterion()
@@ -225,10 +227,18 @@ local function setup_model_rnnlib(opt)
     return model, criterion
 end
 
-------------------------------------------------------------------------------------------------------------
 
-local function setup_model_cudnn(opt)
+--------------------------------------------------------------------------------
+-- CUDNN modules
+--------------------------------------------------------------------------------
+
+local function setup_model_cudnn(vocab_size, opt)
+    assert(vocab_size)
     assert(opt, 'Missing input arg: options')
+
+    require 'cutorch'
+    require 'cunn'
+    require 'cudnn'
 
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
     local rnns = {}
@@ -320,34 +330,44 @@ local function setup_model_cudnn(opt)
     return modelOut, criterion
 end
 
+
+--------------------------------------------------------------------------------
+-- Network setup
+--------------------------------------------------------------------------------
+
+local function backend_type(opt)
+    local str = string.lower(opt.model)
+    if str:find('_cudnn') then
+        return 'cudnn'
+    elseif str:find('_rnn') then
+        return 'rnn'
+    elseif str:find('_rnn') then
+        return 'rnnlib'
+    elseif str:find('_vanilla') then
+        return 'vanilla'
+    else
+        error_msg_model()
+    end
+end
+
 ------------------------------------------------------------------------------------------------------------
 
 function load_model_criterion(vocab_size, opt)
     assert(vocab_size)
     assert(opt)
 
-    local model, criterion
-
+    -- select model backend
     local backend_t = backend_type(opt)
-
     if backend_t == 'vanilla' then
-        model, criterion = setup_model_vanilla(opt)
+        return setup_model_vanilla(vocab_size, opt)
     elseif backend_t == 'rnn' then
-        model, criterion = setup_model_rnn(opt)
+        return setup_model_rnn(vocab_size, opt)
     elseif backend_t == 'rnnlib' then
-        model, criterion = setup_model_rnnlib(opt)
+        return setup_model_rnnlib(vocab_size, opt)
     elseif backend_t == 'cudnn' then
-        model, criterion = setup_model_cudnn(opt)
-        opt.dtype = 'torch.CudaTensor'
+        opt.dtype = 'torch.CudaTensor'  -- force use of cuda
+        return setup_model_cudnn(vocab_size, opt)
     else
         error('Invalid backend: ' .. opt.model)
     end
-
-    print('==> Print model to screen:')
-    print(model)
-
-    model:type(opt.dtype)
-    criterion:type(opt.dtype)
-
-    return model, criterion
 end
