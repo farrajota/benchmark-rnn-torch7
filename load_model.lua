@@ -58,8 +58,6 @@ local function setup_model_vanilla(vocab_size, opt)
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
     local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)  -- flattens the input tensor before feeding to the decoder
-    local view2 = nn.View(1, -1):setNumInputDims(2)     -- recovers the flattened batch info from the decoder tensor
-    local view3 = nn.View(1, 1, -1):setNumInputDims(3)  -- used only during train
     local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
     -- set network
@@ -94,9 +92,7 @@ local function setup_model_vanilla(vocab_size, opt)
     end
     model:add(view1)
     model:add(lin)
-    model:add(view2)
     model.view1 = view1
-    model.view2 = view2
     model.rnns = rnns
 
     -- monkey patch the forward function to reshape
@@ -104,7 +100,6 @@ local function setup_model_vanilla(vocab_size, opt)
     function model:forward(input)
         local N, T = input:size(1), input:size(2)
         self.view1:resetSize(N * T, -1)
-        self.view2:resetSize(N, T, -1)
         return self:updateOutput(input)
     end
 
@@ -114,28 +109,10 @@ local function setup_model_vanilla(vocab_size, opt)
         end
     end
 
-
-    -- Nest the model in order to be easier to train (lazy way)
-    -- Note: the final view reshape reduces some headaches
-    --       with torchnet + tensor reshaping of the criterion.
-    local modelOut = nn.Sequential()
-    modelOut:add(model)
-    modelOut:add(view3)
-    modelOut.view1 = view1
-    modelOut.view2 = view2
-    modelOut.view3 = view3
-    modelOut.rnns = rnns
-
-    function modelOut:resetStates()
-        for i, rnn in ipairs(self.rnns) do
-            rnn:resetStates()
-        end
-    end
-
     -- set criterion
     local criterion = setup_criterion()
 
-    return modelOut, criterion
+    return model, criterion
 end
 
 
@@ -334,9 +311,7 @@ local function setup_model_cudnn(vocab_size, opt)
 
     local lookup = nn.LookupTable(vocab_size, opt.inputsize)
     local rnns = {}
-    local view1 = nn.View(1, 1, -1):setNumInputDims(3)
-    local view2 = nn.View(1, -1):setNumInputDims(2)
-    local view3 = nn.View(1, 1, -1):setNumInputDims(3)
+    local view1 = nn.View(1, 1, -1):setNumInputDims(3)  -- flattens the input tensor before feeding to the decoder
     local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
     -- set network
@@ -378,9 +353,7 @@ local function setup_model_cudnn(vocab_size, opt)
     model:add(nn.Contiguous())
     model:add(view1)
     model:add(lin)
-    model:add(view2)
     model.view1 = view1
-    model.view2 = view2
     model.rnns = rnns
 
     -- monkey patch the forward function to reshape
@@ -388,7 +361,6 @@ local function setup_model_cudnn(vocab_size, opt)
     function model:forward(input)
         local N, T = input:size(1), input:size(2)
         self.view1:resetSize(N * T, -1)
-        self.view2:resetSize(N, T, -1)
         return self:updateOutput(input)
     end
 
@@ -398,28 +370,10 @@ local function setup_model_cudnn(vocab_size, opt)
         end
     end
 
-
-    -- Nest the model in order to be easier to train (lazy way)
-    -- Note: the final view reshape reduces some headaches
-    --       with torchnet + tensor reshaping of the criterion.
-    local modelOut = nn.Sequential()
-    modelOut:add(model)
-    modelOut:add(view3)
-    modelOut.view1 = view1
-    modelOut.view2 = view2
-    modelOut.view3 = view3
-    modelOut.rnns = rnns
-
-    function modelOut:resetStates()
-        for i, rnn in ipairs(self.rnns) do
-            rnn:resetStates()
-        end
-    end
-
     -- set criterion
     local criterion = setup_criterion()
 
-    return modelOut, criterion
+    return model, criterion
 end
 
 

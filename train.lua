@@ -28,14 +28,14 @@ cmd:text('Options')
 cmd:text()
 cmd:text(' ---------- General options ------------------------------------')
 cmd:text()
-cmd:option('-expID',       'rnn-vanilla', 'Experiment ID')
+cmd:option('-expID',       'lstm-vanilla', 'Experiment ID')
 cmd:option('-dataset',  'tinyshakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
 cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
-cmd:option('-model',   'rnn_vanilla', 'Name of the model (see load_model.lua for more information about the available models).')
+cmd:option('-model',   'lstm_vanilla', 'Name of the model (see load_model.lua for more information about the available models).')
 cmd:option('-rnn_size',  {256, 256}, 'size of RNN\'s internal state')
 cmd:option('-dropout',            0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-uniform',          0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
@@ -125,7 +125,7 @@ end
 -- Model + Loss criterion
 --------------------------------------------------------------------------------
 
-local model, criterion, is_nested = load_model_criterion(data.vocab_size, opt)
+local model, criterion, backend = load_model_criterion(data.vocab_size, opt)
 
 print('==> Print model to screen:')
 print(model)
@@ -178,20 +178,13 @@ end
 -- Utility functions
 --------------------------------------------------------------------------------
 
--- Gradient clipping to try to prevent the gradient from exploding.
+--[[ Gradient clipping to try to prevent the gradient from exploding. ]]--
 -- ref: https://github.com/facebookresearch/torch-rnnlib/blob/master/examples/word-language-model/word_lm.lua#L216-L233
 local function clipGradients(grads, norm)
-    local totalnorm = 0
-    for mm = 1, #grads do
-        local modulenorm = grads[mm]:norm()
-        totalnorm = totalnorm + modulenorm * modulenorm
-    end
-    totalnorm = math.sqrt(totalnorm)
+    local totalnorm = grads:norm()
     if totalnorm > norm then
         local coeff = norm / math.max(totalnorm, 1e-6)
-        for mm = 1, #grads do
-            grads[mm]:mul(coeff)
-        end
+        grads:mul(coeff)
     end
 end
 
@@ -263,19 +256,15 @@ engine.hooks.onSample = function(state)
     state.sample.input  = inputs
     state.sample.target = targets
 
-    if is_nested then
-        -- Here it is used a tensor reshaping strategy to simplify
-        -- the training process. These reshapes will not be necessary
-        -- after the model is trained and will be automatically set
-        -- by the monkey-patched forward pass
-        local N, T = inputs:size(1), inputs:size(2)
-        state.network.view1:resetSize(N * T, -1)
-        state.network.view2:resetSize(N, T, -1)
-        state.network.view3:resetSize(N * T, -1)
+    if backend == 'vanilla' or backend == 'cudnn' then
         state.sample.target = state.sample.target:view(-1)
-    else
+    elseif backend == 'rnn' then
         -- no need to reshape tensors
-        state.sample.target = split_targets:forward(targets)
+        state.sample.target = split_table:forward(state.sample.target)
+    elseif backend == 'rnnlib' then
+        --state.sample.input = {state.network.rnn.hiddenbuffer, state.sample.input:transpose(1,2)}
+        state.sample.input = state.sample.input:transpose(1,2)
+        state.sample.target = state.sample.target:view(-1)
     end
 
     timers.dataTimer:stop()
@@ -311,12 +300,9 @@ engine.hooks.onUpdate = function(state)
 end
 
 
---local _, grads = model:parameters()
 engine.hooks.onBackward = function(state)
-    -- clip gradients to prevent them from exploding
-    --clipGradients(grads, opt.grad_clip)
     if opt.grad_clip > 0 then
-        state.network:gradParamClip(opt.grad_clip)
+        clipGradients(state.gradParams, opt.grad_clip)
     end
 end
 
@@ -364,10 +350,7 @@ engine.hooks.onEndEpoch = function(state)
     if state.epoch % opt.snapshot == 0 then
         local snapshot_filename = paths.concat(opt.save, ('checkpoint_%d.t7'):format(state.epoch))
         print('> Saving model snapshot to disk: ' .. snapshot_filename)
-
-        local save_model = state.network
-        if is_nested then save_model = state.network.modules[1] end
-        torch.save(snapshot_filename, {save_model:clearState(), data})
+        torch.save(snapshot_filename, {state.network:clearState(), data})
     end
 
     timers.epochTimer:reset()
