@@ -100,17 +100,10 @@ local function setup_model_vanilla(vocab_size, opt)
     -- monkey patch the forward function to reshape
     -- the view modules before doing the forward pass
     function model:forward(input)
-        if self.mode_train then
-            local N, T = input:size(1), input:size(2)
-            self.view1:resetSize(N * T, -1)
-            self.view2:resetSize(N * T, -1)
-            return self:updateOutput(input)
-        else
-            local N, T = input:size(1), input:size(2)
-            self.view1:resetSize(N * T, -1)
-            self.view2:resetSize(N * T, -1)
-            return self:updateOutput(input)
-        end
+        local N, T = input:size(1), input:size(2)
+        self.view1:resetSize(N * T, -1)
+        self.view2:resetSize(N, T, -1)
+        return self:updateOutput(input)
     end
 
     function model:resetStates()
@@ -229,7 +222,7 @@ end
 
 
 --------------------------------------------------------------------------------
--- CUDNN modules
+-- CUDNN backend
 --------------------------------------------------------------------------------
 
 local function setup_model_cudnn(vocab_size, opt)
@@ -244,10 +237,10 @@ local function setup_model_cudnn(vocab_size, opt)
     local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)
     local view2 = nn.View(1, -1):setNumInputDims(2)
-    local view3 = nn.View(opt.batchSize * opt.seq_length, -1):setNumInputDims(3)
+    local view3 = nn.View(1, 1, -1):setNumInputDims(3)
     local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
 
-
+    -- set network
     local model = nn.Sequential()
     model:add(lookup)
     if opt.dropout > 0 then
@@ -307,27 +300,28 @@ local function setup_model_cudnn(vocab_size, opt)
     end
 
 
+    -- Nest the model in order to be easier to train (lazy way)
+    -- Note: the final view reshape reduces some headaches
+    --       with torchnet + tensor reshaping of the criterion.
+    local is_nested = true
     local modelOut = nn.Sequential()
     modelOut:add(model)
     modelOut:add(view3)
     modelOut.view1 = view1
     modelOut.view2 = view2
     modelOut.view3 = view3
+    modelOut.rnns = rnns
 
-    function modelOut:forward(input)
-        local N, T = input:size(1), input:size(2)
-        self.view1:resetSize(N * T, -1)
-        self.view2:resetSize(N, T, -1)
-        self.view3:resetSize(N * T, -1)
-        return self:updateOutput(input)
+    function modelOut:resetStates()
+        for i, rnn in ipairs(self.rnns) do
+            rnn:resetStates()
+        end
     end
 
+    -- set criterion
     local criterion = setup_criterion()
 
-    opt.nested_model = true  -- flag indicating the model is nested.
-                             -- If true, save only the first model module.
-
-    return modelOut, criterion
+    return modelOut, criterion, is_nested
 end
 
 
