@@ -8,6 +8,8 @@ require 'torch'
 require 'string'
 require 'optim'
 
+local optnet = require 'optnet'
+
 paths.dofile('data.lua')
 paths.dofile('load_model.lua')
 
@@ -219,6 +221,7 @@ local meters = {
     train_err = tnt.AverageValueMeter(),
     test_err = tnt.AverageValueMeter(),
 
+    batch_time = tnt.AverageValueMeter(),
     forward_time = tnt.AverageValueMeter(),
     backward_time = tnt.AverageValueMeter(),
 }
@@ -227,6 +230,7 @@ function meters:reset()
     self.train_err:reset()
     self.test_err:reset()
 
+    self.batch_time:reset()
     self.forward_time:reset()
     self.backward_time:reset()
 end
@@ -236,18 +240,18 @@ local loggers = {
     full_train = optim.Logger(paths.concat(opt.save,'full_train.log'), opt.continue),
     epoch_loss = optim.Logger(paths.concat(opt.save,'epoch_loss.log'), opt.continue),
 
-    epoch_time = optim.Logger(paths.concat(opt.save,'epoch_time.log'), opt.continue),
+    epoch_info = optim.Logger(paths.concat(opt.save,'epoch_info.log'), opt.continue),
 }
 
 loggers.full_test:setNames{'Test Loss'}
 loggers.full_train:setNames{'Train Loss'}
 loggers.epoch_loss:setNames{'Train Loss', 'Test Loss'}
-loggers.epoch_time:setNames{'Forward Time', 'Backward Time'}
+loggers.epoch_info:setNames{'Forward Time', 'Backward Time', 'Batch Time', 'GPU Memory'}
 
 loggers.full_test.showPlot = false
 loggers.full_train.showPlot = false
 loggers.epoch_loss.showPlot = false
-loggers.epoch_time.showPlot = false
+loggers.epoch_info.showPlot = false
 
 
 -- set up training engine:
@@ -329,7 +333,9 @@ end
 
 engine.hooks.onBackward = function(state)
     timers.backwardTimer:stop()
+    timers.batchTimer:stop()
     meters.backward_time:add(timers.backwardTimer:time().real)
+    meters.batch_time:add(timers.batchTimer:time().real)
     if opt.grad_clip > 0 then
         clipGradients(state.gradParams, opt.grad_clip)
     end
@@ -351,6 +357,8 @@ engine.hooks.onEndEpoch = function(state)
     local tr_loss = meters.train_err:value()
     local tr_fw = meters.forward_time:value()
     local tr_bw = meters.backward_time:value()
+    local tr_batch = meters.batch_time:value()
+    local mem = optnet.countUsedMemory(state.network).total_size/1024/1024
     meters:reset()
     state.t = 0
     state.network:resetStates()
@@ -378,7 +386,7 @@ engine.hooks.onEndEpoch = function(state)
     ---------------------
 
     loggers.epoch_loss:add{tr_loss, ts_loss}
-    loggers.epoch_time:add{tr_fw, tr_bw}
+    loggers.epoch_info:add{tr_fw, tr_bw, tr_batch, mem}
 
 
     ---------------------------
@@ -420,7 +428,7 @@ if opt.plot_graph > 0 then
     loggers.full_test:style{'+-', '+-'}; loggers.full_test:plot()
     loggers.full_train:style{'+-', '+-'}; loggers.full_train:plot()
     loggers.epoch_loss:style{'-', '-'}; loggers.epoch_loss:plot()
-    loggers.epoch_time:style{'-', '-'}; loggers.epoch_time:plot()
+    loggers.epoch_info:style{'-', '-'}; loggers.epoch_info:plot()
 end
 
 print('==> Script Complete.')
