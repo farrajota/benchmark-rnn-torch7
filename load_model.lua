@@ -55,10 +55,10 @@ local function setup_model_vanilla(vocab_size, opt)
     assert(vocab_size)
     assert(opt, 'Missing input arg: options')
 
-    local lookup = nn.LookupTable(vocab_size, opt.inputsize)
+    local lookup = nn.LookupTable(vocab_size, opt.rnn_size)
     local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)  -- flattens the input tensor before feeding to the decoder
-    local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
+    local lin = nn.Linear(opt.rnn_size, vocab_size)
 
     -- set network
     local model = nn.Sequential()
@@ -66,17 +66,16 @@ local function setup_model_vanilla(vocab_size, opt)
     if opt.dropout > 0 then
         model:add(nn.Dropout(opt.dropout))
     end
-    local inputsize = opt.inputsize
-    for i, hiddensize in ipairs(opt.hiddensize) do
+    for i=1, opt.num_layers do
         -- add module to the network
 
         local rnn
         local str = string.lower(opt.model)
         if str == 'rnn_vanilla' then
-            rnn = nn.VanillaRNN(inputsize, hiddensize)
+            rnn = nn.VanillaRNN(opt.rnn_size, opt.rnn_size)
             rnn.remember_states = true
         elseif str == 'lstm_vanilla' then
-            rnn = nn.VanillaLSTM(inputsize, hiddensize)
+            rnn = nn.VanillaLSTM(opt.rnn_size, opt.rnn_size)
             rnn.remember_states = true
         else
             error_msg_model()
@@ -88,7 +87,6 @@ local function setup_model_vanilla(vocab_size, opt)
         end
 
         table.insert(rnns, rnn)
-        inputsize = hiddensize
     end
     model:add(view1)
     model:add(lin)
@@ -127,9 +125,9 @@ local function setup_model_rnn(vocab_size, opt)
 
     require 'rnn'
 
-    local lookup = nn.LookupTable(vocab_size, opt.inputsize)
+    local lookup = nn.LookupTable(vocab_size, opt.rnn_size)
     lookup.maxOutNorm = -1 -- prevent weird maxnormout behaviour
-    local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
+    local lin = nn.Linear(opt.rnn_size, vocab_size)
 
     local model = nn.Sequential()
     model:add(lookup)
@@ -139,27 +137,26 @@ local function setup_model_rnn(vocab_size, opt)
     model:add(nn.SplitTable(1))
 
     local stepmodule = nn.Sequential()
-    local inputsize = opt.inputsize
-    for i,hiddensize in ipairs(opt.hiddensize) do
+    for i=1, opt.num_layers do
 
         local rnn
         local str = string.lower(opt.model)
         if str == 'rnn_rnn' then
             local rm =  nn.Sequential() -- input is {x[t], h[t-1]}
                 :add(nn.ParallelTable()
-                    :add(i==1 and nn.Identity() or nn.Linear(inputsize, hiddensize)) -- input layer
-                    :add(nn.Linear(hiddensize, hiddensize))) -- recurrent layer
+                    :add(i==1 and nn.Identity() or nn.Linear(opt.rnn_size, opt.rnn_size)) -- input layer
+                    :add(nn.Linear(opt.rnn_size, opt.rnn_size))) -- recurrent layer
                 :add(nn.CAddTable()) -- merge
                 :add(nn.Sigmoid()) -- transfer
-            rnn = nn.Recurrence(rm, hiddensize, 1)
+            rnn = nn.Recurrence(rm, opt.rnn_size, 1)
         elseif str == 'lstm_rnn' then
-            rnn =  nn.LSTM(inputsize, hiddensize)
+            rnn =  nn.LSTM(opt.rnn_size, opt.rnn_size)
         elseif str == 'fastlstm_rnn' then
             nn.FastLSTM.usenngraph = true -- faster
             nn.FastLSTM.bn = opt.bn
-            rnn = nn.FastLSTM(inputsize, hiddensize)
+            rnn = nn.FastLSTM(opt.rnn_size, opt.rnn_size)
         elseif str == 'gru_rnn' then
-            rnn = nn.GRU(inputsize, hiddensize)
+            rnn = nn.GRU(opt.rnn_size, opt.rnn_size)
         else
             error_msg_model()
         end
@@ -169,8 +166,6 @@ local function setup_model_rnn(vocab_size, opt)
         if opt.dropout > 0 then
             stepmodule:add(nn.Dropout(opt.dropout))
         end
-
-        inputsize = hiddensize
     end
 
     -- output layer
@@ -207,12 +202,12 @@ local function setup_model_rnnlib(vocab_size, opt)
 
     local use_cudnn = true
 
-    -- setup rnn layers
+
     local rnn, cellfun, cellstr
     local str = string.lower(opt.model)
     if str == 'rnn_rnnlib' then
         cellfun = rnnlib.cell.RNNTanh
-        cellstr = 'RNNTanh'
+        cellstr = 'RNN'
     elseif str == 'lstm_rnnlib' then
         cellfun = rnnlib.cell.LSTM
         cellstr = 'LSTM'
@@ -223,28 +218,52 @@ local function setup_model_rnnlib(vocab_size, opt)
         error_msg_model()
     end
 
-    if use_cudnn then
-        rnn = rnnlib.makeCudnnRecurrent{
-            cellstring = cellstr,
-            inputsize  = opt.inputsize,
-            hids       = opt.rnn_size,
-        }
-    else
-        rnn = rnnlib.makeRecurrent{
-            cellfn    = cellfun,
-            inputsize = opt.inputsize,
-            hids      = opt.rnn_size,
-        }
-    end
+    local rnn = nn[cellstr]{
+        inputsize = opt.rnn_size,
+        hidsize   = opt.rnn_size,
+        nlayer    = opt.num_layers,
+        usecudnn  = use_cudnn,
+    }
+
+    ---- setup rnn layers
+    --local rnn, cellfun, cellstr
+    --local str = string.lower(opt.model)
+    --if str == 'rnn_rnnlib' then
+    --    cellfun = rnnlib.cell.RNNTanh
+    --    cellstr = 'RNNTanh'
+    --elseif str == 'lstm_rnnlib' then
+    --    cellfun = rnnlib.cell.LSTM
+    --    cellstr = 'LSTM'
+    --elseif str == 'gru_rnnlib' then
+    --    cellfun = rnnlib.cell.GRU
+    --    cellstr = 'GRU'
+    --else
+    --    error_msg_model()
+    --end
+--
+    --if use_cudnn then
+    --    rnn = rnnlib.makeCudnnRecurrent{
+    --        cellstring = cellstr,
+    --        inputsize  = opt.inputsize,
+    --        hids       = opt.rnn_size,
+    --    }
+    --else
+    --    rnn = rnnlib.makeRecurrent{
+    --        cellfn    = cellfun,
+    --        inputsize = opt.inputsize,
+    --        hids      = opt.rnn_size,
+    --    }
+    --end
+
     -- Reset the hidden state.
     rnn:initializeHidden(opt.batchSize)
 
-    local lut = nn.LookupTable(vocab_size, opt.inputsize)
+    local lut = nn.LookupTable(vocab_size, opt.rnn_size)
     if opt.uniform then
         lut.weight:uniform(-opt.uniform, opt.uniform)
     end
 
-    local decoder = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
+    local decoder = nn.Linear(opt.rnn_size, vocab_size)
     decoder.bias:fill(0)
     if opt.uniform then
         decoder.weight:uniform(-opt.uniform, opt.uniform)
@@ -310,10 +329,10 @@ local function setup_model_cudnn(vocab_size, opt)
     require 'cunn'
     require 'cudnn'
 
-    local lookup = nn.LookupTable(vocab_size, opt.inputsize)
+    local lookup = nn.LookupTable(vocab_size, opt.rnn_size)
     local rnns = {}
     local view1 = nn.View(1, 1, -1):setNumInputDims(3)  -- flattens the input tensor before feeding to the decoder
-    local lin = nn.Linear(opt.hiddensize[opt.num_layers], vocab_size)
+    local lin = nn.Linear(opt.rnn_size, vocab_size)
 
     -- set network
     local model = nn.Sequential()
@@ -322,40 +341,32 @@ local function setup_model_cudnn(vocab_size, opt)
         model:add(nn.Dropout(opt.dropout))
     end
     model:add(nn.Contiguous())
-    local inputsize = opt.inputsize
-    for i, hiddensize in ipairs(opt.hiddensize) do
-        -- add module to the network
-
-        local rnn
-        local str = string.lower(opt.model)
-        if str == 'rnnrelu_cudnn' then
-            rnn = cudnn.RNNReLU(inputsize, hiddensize, 1, true, opt.dropout, true)
-            rnn:resetDropoutDescriptor()
-        elseif str == 'rnntanh_cudnn' then
-            rnn = cudnn.RNNTanh(inputsize, hiddensize, 1, true, opt.dropout, true)
-            rnn:resetDropoutDescriptor()
-        elseif str == 'lstm_cudnn' then
-            rnn = cudnn.LSTM(inputsize, hiddensize, 1, true, opt.dropout, true)
-            rnn:resetDropoutDescriptor()
-        elseif str == 'blstm_cudnn' then
-            rnn = cudnn.BLSTM(inputsize, hiddensize, 1, true, opt.dropout, true)
-            rnn:resetDropoutDescriptor()
-        elseif str == 'gru_cudnn' then
-            rnn = cudnn.GRU(inputsize, hiddensize, 1, true, opt.dropout, true)
-            rnn:resetDropoutDescriptor()
-        else
-            error_msg_model()
-        end
-        model:add(rnn)
-
-        table.insert(rnns, rnn)
-        inputsize = hiddensize
+    local rnn
+    local str = string.lower(opt.model)
+    if str == 'rnnrelu_cudnn' then
+        rnn = cudnn.RNNReLU(opt.rnn_size, opt.rnn_size, opt.num_layers, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
+    elseif str == 'rnntanh_cudnn' then
+        rnn = cudnn.RNNTanh(opt.rnn_size, opt.rnn_size, opt.num_layers, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
+    elseif str == 'lstm_cudnn' then
+        rnn = cudnn.LSTM(opt.rnn_size, opt.rnn_size, opt.num_layers, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
+    elseif str == 'blstm_cudnn' then
+        rnn = cudnn.BLSTM(opt.rnn_size, opt.rnn_size, opt.num_layers, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
+    elseif str == 'gru_cudnn' then
+        rnn = cudnn.GRU(opt.rnn_size, opt.rnn_size, opt.num_layers, true, opt.dropout, true)
+        rnn:resetDropoutDescriptor()
+    else
+        error_msg_model()
     end
+    model:add(rnn)
     model:add(nn.Contiguous())
     model:add(view1)
     model:add(lin)
     model.view1 = view1
-    model.rnns = rnns
+    model.rnns = rnn
 
     -- monkey patch the forward function to reshape
     -- the view modules before doing the forward pass

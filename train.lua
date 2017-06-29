@@ -38,7 +38,8 @@ cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
 cmd:option('-model',   'lstm_rnnlib', 'Name of the model (see load_model.lua for more information about the available models).')
-cmd:option('-rnn_size',  {256, 256}, 'size of RNN\'s internal state')
+cmd:option('-rnn_size',         256, 'size of RNN\'s internal state')
+cmd:option('-num_layers',         2, 'Number of rnn modules')
 cmd:option('-dropout',            0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-uniform',          0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
 cmd:text()
@@ -79,12 +80,11 @@ if opt.GPU > 0 then
 else
     opt.dtype = 'torch.FloatTensor'
 end
-opt.num_layers = #opt.rnn_size
-opt.inputsize = opt.rnn_size[1]
+opt.inputsize = opt.rnn_size
 opt.hiddensize = opt.rnn_size
 opt.expID = (opt.expID ~= '' and opt.expID) or
             string.format('length=%d_%s_size=%s_nlayers=%s_dropout=%0.2f',
-            opt.seq_length, opt.model, opt.rnn_size[1], opt.num_layers, opt.dropout)
+            opt.seq_length, opt.model, opt.rnn_size, opt.num_layers, opt.dropout)
 opt.save = paths.concat('data/exp/', opt.dataset, opt.expID)
 
 if not paths.dirp(opt.save) then
@@ -290,7 +290,6 @@ engine.hooks.onSample = function(state)
     if backend == 'vanilla' or backend == 'cudnn' then
         state.sample.target = state.sample.target:view(-1)
     elseif backend == 'rnn' then
-        -- no need to reshape tensors
         state.sample.target = split_table:forward(state.sample.target)
     elseif backend == 'rnnlib' then
         --state.sample.input = {state.network.rnn.hiddenbuffer, state.sample.input:transpose(1,2)}
@@ -305,8 +304,6 @@ end
 
 
 engine.hooks.onForwardCriterion = function(state)
-
-    timers.forwardTimer:stop()
     meters.forward_time:add(timers.forwardTimer:time().real)
 
     local iters
@@ -332,8 +329,6 @@ end
 
 
 engine.hooks.onBackward = function(state)
-    timers.backwardTimer:stop()
-    timers.batchTimer:stop()
     meters.backward_time:add(timers.backwardTimer:time().real)
     meters.batch_time:add(timers.batchTimer:time().real)
     if opt.grad_clip > 0 then
