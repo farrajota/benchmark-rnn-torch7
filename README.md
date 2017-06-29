@@ -1,8 +1,12 @@
 # RNN modules/libraries benchmark on Torch7
 
-Train and test rnn modules like (rnn, lstm, gru, etc.) of two different libraries ([rnn](https://github.com/Element-Research/rnn)/[cudnn](https://github.com/soumith/cudnn.torch)) on a simple task for word language model.
+This repo contains benchmark results for popular rnn modules/architectures on three different libraries available for Torch7 on a simple task for word language model:
 
-The evaluated rnn modules on this repo are the following:
+- [cudnn](https://github.com/soumith/cudnn.torch)
+- [rnn](https://github.com/Element-Research/rnn)
+- [rnnlib](https://github.com/facebookresearch/torch-rnnlib)
+
+The evaluated rnn architectures are the following:
 
 - RNN
 - LSTM
@@ -16,12 +20,14 @@ Also, you'll need a NVIDIA GPU with compute capability 3.5+ (2GB+ ram) and `CUDN
 Furthermore, you'll need to install the following dependencies for torch7:
 
 ```bash
-luarocks install rnn
 luarocks install cudnn
+luarocks install optnet
+luarocks install rnn
+luarocks install rnnlib
 luarocks install torchnet
 ```
 
-> Note: It is best to have an up-to-date version of torch7 before running this code**). To do this, simply go to your `torch/` folder and run the `./update.sh` file.
+> Note: Please make sure you have an up-to-date version of torch7 before running the benchmark script. To do this, go to your `torch/` folder and run the `./update.sh` file.
 
 
 ## Getting started
@@ -41,15 +47,15 @@ This script will download and extract the following datasets to disk:
 - [wikipedia](http://prize.hutter1.net/)
 
 
-### Training and testing the networks
+### Benchmarking the networks/libraries
 
-To evaluate the different rnn modules tested here, run the main script:
+To evaluate the different rnn modules/libraries tested here, run the main script:
 
 ```
-th run_benchmark.lua
+th scripts/run_benchmark.lua
 ```
 
-This will train and test several networks on three different datasets and plot all results into a graph for each dataset.
+This will train and test several networks on three different datasets and plot all results into sveral graphs for each dataset.
 
 
 ### Results
