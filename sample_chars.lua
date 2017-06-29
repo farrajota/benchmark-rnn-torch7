@@ -39,14 +39,25 @@ torch.manualSeed(opt.manualSeed)
 
 
 --------------------------------------------------------------------------------
--- Model
+-- Load Model + initialize it (if needed)
 --------------------------------------------------------------------------------
 
+opt.model = '/home/mf/Toolkits/Codigo/git/benchmark-rnn-torch7/data/exp/tinyshakespear/lstm-rnnlib/checkpoint_10.t7'
+local configs = torch.load(paths.concat(paths.dirname(opt.model), 'configs.t7'))
+if configs.backend == 'rnn' then
+    require 'rnn'
+elseif configs.backend == 'rnnlib' then
+    rnnlib = require 'rnnlib'
+end
 local checkpoint = torch.load(opt.model)
 local model = checkpoint[1]
 model:evaluate()
 print('Model:')
 print(model)
+
+if configs.backend == 'rnnlib' then
+    model.rnn:initializeHidden(1)
+end
 
 
 --------------------------------------------------------------------------------
