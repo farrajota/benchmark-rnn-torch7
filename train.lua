@@ -28,14 +28,14 @@ cmd:text('Options')
 cmd:text()
 cmd:text(' ---------- General options ------------------------------------')
 cmd:text()
-cmd:option('-expID',       'lstm-vanilla', 'Experiment ID')
+cmd:option('-expID',       'lstm-rnnlib', 'Experiment ID')
 cmd:option('-dataset',  'tinyshakespear', 'Dataset choice: shakespear | linux | wikipedia.')
 cmd:option('-manualSeed',  2, 'Manually set RNG seed')
 cmd:option('-GPU',         1, 'Default preferred GPU, if set to -1: no GPU')
 cmd:text()
 cmd:text(' ---------- Model options --------------------------------------')
 cmd:text()
-cmd:option('-model',   'lstm_vanilla', 'Name of the model (see load_model.lua for more information about the available models).')
+cmd:option('-model',   'lstm_rnnlib', 'Name of the model (see load_model.lua for more information about the available models).')
 cmd:option('-rnn_size',  {256, 256}, 'size of RNN\'s internal state')
 cmd:option('-dropout',            0, 'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-uniform',          0.0, 'Initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
@@ -210,31 +210,44 @@ local timers = {
    batchTimer = torch.Timer(),
    dataTimer = torch.Timer(),
    epochTimer = torch.Timer(),
+
+   forwardTimer = torch.Timer(),
+   backwardTimer = torch.Timer(),
 }
 
 local meters = {
     train_err = tnt.AverageValueMeter(),
     test_err = tnt.AverageValueMeter(),
+
+    forward_time = tnt.AverageValueMeter(),
+    backward_time = tnt.AverageValueMeter(),
 }
 
 function meters:reset()
     self.train_err:reset()
     self.test_err:reset()
+
+    self.forward_time:reset()
+    self.backward_time:reset()
 end
 
 local loggers = {
     full_test = optim.Logger(paths.concat(opt.save,'full_test.log'), opt.continue),
     full_train = optim.Logger(paths.concat(opt.save,'full_train.log'), opt.continue),
     epoch_loss = optim.Logger(paths.concat(opt.save,'epoch_loss.log'), opt.continue),
+
+    epoch_time = optim.Logger(paths.concat(opt.save,'epoch_time.log'), opt.continue),
 }
 
 loggers.full_test:setNames{'Test Loss'}
 loggers.full_train:setNames{'Train Loss'}
 loggers.epoch_loss:setNames{'Train Loss', 'Test Loss'}
+loggers.epoch_time:setNames{'Forward Time', 'Backward Time'}
 
 loggers.full_test.showPlot = false
 loggers.full_train.showPlot = false
 loggers.epoch_loss.showPlot = false
+loggers.epoch_time.showPlot = false
 
 
 -- set up training engine:
@@ -251,8 +264,9 @@ engine.hooks.onStartEpoch = function(state)
     print(('Starting Train epoch %d/%d'):format(state.epoch+1, state.maxepoch))
     print('**********************************************')
     state.config = optimState(state.epoch+1)
-    timers.epochTimer:reset()
     state.network:training() -- ensure the model is set to training mode
+    state.network:resetStates()
+    timers.epochTimer:reset()
 end
 
 
@@ -282,10 +296,14 @@ engine.hooks.onSample = function(state)
 
     timers.dataTimer:stop()
     timers.batchTimer:reset()
+    timers.forwardTimer:reset()
 end
 
 
 engine.hooks.onForwardCriterion = function(state)
+
+    timers.forwardTimer:stop()
+    meters.forward_time:add(timers.forwardTimer:time().real)
 
     local iters
     if state.training then
@@ -304,19 +322,23 @@ engine.hooks.onForwardCriterion = function(state)
             state.epoch+1, opt.nEpochs, (state.t+1), iters, opt.batchSize, opt.seq_length,
             state.criterion.output, timers.batchTimer:time().real, opt.LR))
     end
+
+    timers.backwardTimer:reset()
+end
+
+
+engine.hooks.onBackward = function(state)
+    timers.backwardTimer:stop()
+    meters.backward_time:add(timers.backwardTimer:time().real)
+    if opt.grad_clip > 0 then
+        clipGradients(state.gradParams, opt.grad_clip)
+    end
 end
 
 
 engine.hooks.onUpdate = function(state)
     timers.dataTimer:reset()
     timers.dataTimer:resume()
-end
-
-
-engine.hooks.onBackward = function(state)
-    if opt.grad_clip > 0 then
-        clipGradients(state.gradParams, opt.grad_clip)
-    end
 end
 
 
@@ -327,6 +349,8 @@ engine.hooks.onEndEpoch = function(state)
 
     print(('Train Loss: %0.5f'):format(meters.train_err:value() ))
     local tr_loss = meters.train_err:value()
+    local tr_fw = meters.forward_time:value()
+    local tr_bw = meters.backward_time:value()
     meters:reset()
     state.t = 0
     state.network:resetStates()
@@ -354,6 +378,7 @@ engine.hooks.onEndEpoch = function(state)
     ---------------------
 
     loggers.epoch_loss:add{tr_loss, ts_loss}
+    loggers.epoch_time:add{tr_fw, tr_bw}
 
 
     ---------------------------
@@ -395,6 +420,7 @@ if opt.plot_graph > 0 then
     loggers.full_test:style{'+-', '+-'}; loggers.full_test:plot()
     loggers.full_train:style{'+-', '+-'}; loggers.full_train:plot()
     loggers.epoch_loss:style{'-', '-'}; loggers.epoch_loss:plot()
+    loggers.epoch_time:style{'-', '-'}; loggers.epoch_time:plot()
 end
 
 print('==> Script Complete.')
