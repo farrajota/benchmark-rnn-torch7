@@ -120,6 +120,7 @@ end
 -- RNN lib (Element-Research)
 --------------------------------------------------------------------------------
 
+-- ref: https://github.com/Element-Research/rnn/blob/master/examples/recurrent-language-model.lua
 local function setup_model_rnn(vocab_size, opt)
     assert(vocab_size)
     assert(opt, 'Missing input arg: options')
@@ -273,7 +274,7 @@ local function setup_model_rnnlib(vocab_size, opt)
     end
 
     function model:resetStates()
-        rnn:initializeHidden(opt.batchSize)
+        -- do nothing
     end
 
     -- monkey-patch the forward method to only need to accept
