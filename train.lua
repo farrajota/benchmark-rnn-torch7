@@ -306,22 +306,29 @@ end
 engine.hooks.onForwardCriterion = function(state)
     meters.forward_time:add(timers.forwardTimer:time().real)
 
+    local loss = state.criterion.output
+    if backend == 'rnn' then
+        loss = loss / opt.batchSize
+    end
+
     local iters
     if state.training then
         iters = trainIters
-        meters.train_err:add(state.criterion.output)
-        loggers.full_train:add{state.criterion.output}
+        meters.train_err:add(loss)
+        loggers.full_train:add{loss}
     else
         iters = trainIters
-        meters.test_err:add(state.criterion.output)
-        loggers.full_test:add{state.criterion.output}
+        meters.test_err:add(loss)
+        loggers.full_test:add{loss}
     end
 
     -- display train info
     if (state.t+1) % opt.print_every == 0 or (state.t+1) == iters then
-        print(string.format("epoch[%d/%d][%d/%d][batch=%d][length=%d], loss = %6.8f, time/batch = %.4fs, LR=%2.2e",
-            state.epoch+1, opt.nEpochs, (state.t+1), iters, opt.batchSize, opt.seq_length,
-            state.criterion.output, timers.batchTimer:time().real, opt.LR))
+        print(string.format('epoch[%d/%d][%d/%d][batch=%d][length=%d], ' ..
+                            'loss = %6.8f, time/batch = %.4fs, LR=%2.2e',
+                            state.epoch+1, opt.nEpochs, (state.t+1), iters,
+                            opt.batchSize, opt.seq_length, loss,
+                            timers.batchTimer:time().real, opt.LR))
     end
 
     timers.backwardTimer:reset()
