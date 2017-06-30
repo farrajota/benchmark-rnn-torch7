@@ -9,16 +9,14 @@ require 'gnuplot'
 
 torch.setdefaulttensortype('torch.FloatTensor')
 
-local save_dir = 'data/results/'
-
 
 --------------------------------------------------------------------------------
 -- Utility functions
 --------------------------------------------------------------------------------
 
 local function load_log(filename)
-    local f = io.open(filename, 'r')
     local data = {}
+    local f = io.open(filename, 'r')
     for line in f:lines() do
         table.insert(data, line)
     end
@@ -28,7 +26,11 @@ local function load_log(filename)
     for i=1, #data do
         local str = data[i]:split('\t')
         for j=1, #str do
-            table.insert(out[j], tonumber(str[j]))
+            if out[j] then
+                table.insert(out[j], tonumber(str[j]))
+            else
+                out[j] = {tonumber(str[j])}
+            end
         end
     end
     return out
@@ -68,6 +70,7 @@ end
 ------------------------------------------------------------------------------------------------------------
 
 local function plot_graph(data, filename, title, x_label, y_label)
+    local save_dir = 'data/results/'
     gnuplot.pngfigure(paths.concat(save_dir, filename))
     gnuplot.plot(data)
     gnuplot.xlabel(x_label)
@@ -98,8 +101,9 @@ end
 
 ------------------------------------------------------------------------------------------------------------
 
-local function convert_data(hiddendim_data)
+local function convert_data(hiddendim_data, str_suffix, plt_format)
     local model_data = {}
+    local str_suffix = str_suffix or ''
     local dimensions = get_sorted_keys_table(hiddendim_data)
     for _, dim in ipairs(dimensions) do
         data = hiddendim_data[dim]
@@ -114,7 +118,7 @@ local function convert_data(hiddendim_data)
     end
     local out = {}
     for model, data in pairs(model_data) do
-        table.insert(out, {model, torch.Tensor(dimensions), torch.Tensor(data), '-'})
+        table.insert(out, {model .. str_suffix, torch.Tensor(dimensions), torch.Tensor(data), plt_format or '-'})
     end
     return out
 end
@@ -124,6 +128,7 @@ end
 -- Train all networks on all datasets
 --------------------------------------------------------------------------------
 
+g_skip_train = false
 local hidden_dimensions = {256, 512, 1024, 2048, 4096}
 local datasets = {'shakespear', 'linux', 'wikipedia'}
 
@@ -132,11 +137,13 @@ for i, dim in ipairs(hidden_dimensions) do
     g_hidden_dimension_size = dim  -- global variable indicating
                                                   -- the rnn layer dimension for
                                                   -- train
+    local dataset_configs = {}
     for _, dataset in pairs(datasets) do
         g_dataset = dataset  -- global variable to select the dataset type
         local configs_dataset = paths.dofile('scripts/train_all.lua')
-        hidden_dimensions_info[dim] = configs_dataset
+        dataset_configs[g_dataset] = configs_dataset
     end
+    hidden_dimensions_info[dim] = dataset_configs
 end
 
 
@@ -148,7 +155,9 @@ local forward_stats = {}
 local backward_stats = {}
 local batch_stats = {}
 local gpu_memory_stats = {}
-for dim, configs_dataset in ipairs(hidden_dimensions_info) do
+local dimensions = get_sorted_keys_table(hidden_dimensions_info)
+for _, dim in ipairs(dimensions) do
+    local configs_dataset = hidden_dimensions_info[dim]
     local dim_stats = {}
     local loss_epoch_stats = {}
 
@@ -157,37 +166,37 @@ for dim, configs_dataset in ipairs(hidden_dimensions_info) do
     local backward_data = {}
     local batch_data = {}
     local memory_data = {}
-    local loss_data = {}
     for dataset, configs in pairs(configs_dataset) do
+        local loss_data = {}
         for model, config in pairs(configs) do
-            local log_loss_filename = ('data/exp/%s/%s/epoch_loss.log'):format(dataset, model)
-            local log_info_filename = ('data/exp/%s/%s/epoch_info.log'):format(dataset, model)
+            local log_loss_filename = ('data/exp/%s/%s/epoch_loss.log'):format(dataset, config.expID)
+            local log_info_filename = ('data/exp/%s/%s/epoch_info.log'):format(dataset, config.expID)
 
             local train_loss, test_loss = parse_epoch_info_log(log_loss_filename)
             local forward_time, backward_time, batch_time, memory_mb = parse_epoch_info_log(log_info_filename)
 
             if forward_data[model] then
-                table.insert(forward_data[model],  mean_table(forward_time))
-                table.insert(backward_data[model], mean_table(backward_time))
-                table.insert(batch_data[model],    mean_table(batch_time))
+                table.insert(forward_data[model],  mean_table(forward_time) * 1000)
+                table.insert(backward_data[model], mean_table(backward_time) * 1000)
+                table.insert(batch_data[model],    mean_table(batch_time) * 1000)
                 table.insert(memory_data[model],   mean_table(memory_mb))
             else
-                forward_data[model]  = {mean_table(forward_time)}
-                backward_data[model] = {mean_table(backward_time)}
-                batch_data[model]    = {mean_table(batch_time)}
+                forward_data[model]  = {mean_table(forward_time) * 1000}
+                backward_data[model] = {mean_table(backward_time) * 1000}
+                batch_data[model]    = {mean_table(batch_time) * 1000}
                 memory_data[model]   = {mean_table(memory_mb)}
             end
 
-            table.insert(loss_data, {model .. ' (train)', torch.range(1, #train_loss), torch.FloatTensor(train_loss), '+'})
-            table.insert(loss_data, {model .. ' (test)', torch.range(1, #test_loss), torch.FloatTensor(test_loss), '-'})
+            table.insert(loss_data, {model, torch.range(1, #test_loss), torch.FloatTensor(test_loss), '-'})
+            --table.insert(loss_data, {model .. ' (train)', torch.range(1, #train_loss), torch.FloatTensor(train_loss), '+-'})
         end
 
         -- loss per epoch graph
         plot_graph(loss_data,
                 ('loss_%s_%d.png'):format(dataset, dim),
                 'Train/Test Loss per Epoch',
-                'Loss',
-                'Epoch')
+                'Epoch',
+                'Loss')
     end
 
     forward_stats[dim] = forward_data
@@ -200,20 +209,21 @@ end
 -- batch time vs hidden dimensions
 plot_graph(convert_data(batch_stats),
            'speed_vs_dimension.png',
-           'Speed vs Dimension for Depth 2',
-           'Speed (ms/batch)',
-           'Hidden Dimension')
+           'Speed vs Hidden Dimension for Depth 2',
+           'Hidden Dimension',
+           'Speed (ms/batch)')
 
 -- gpu memory usage vs hidden dimensions
 plot_graph(convert_data(gpu_memory_stats),
            'memory_vs_dimension.png',
-           'GPU memory usage vs Dimension for Depth 2',
-           'Memory (MB)',
-           'Hidden Dimension')
+           'GPU memory usage vs Hidden Dimension for Depth 2',
+           'Hidden Dimension',
+           'Memory (MB)')
 
 -- forward/backward time vs hidden dimensions
-plot_graph(convert_data(fw_bw_stats),
+plot_graph(concat_table(convert_data(forward_stats, ' (fw)'),
+                        convert_data(backward_stats, ' (bw)', '+-')),
            'fw_bw_vs_dimension.png',
-           'Forward/Backward speed vs Dimension for Depth 2',
-           'Forward/Backward Speed (ms/batch)',
-           'Hidden Dimension')
+           'Forward(fw) + Backward(bw) Speed vs Hidden Dimension for Depth 2',
+           'Hidden Dimension',
+           'Speed (ms/batch)')
