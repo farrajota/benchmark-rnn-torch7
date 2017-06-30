@@ -77,6 +77,7 @@ local function plot_graph(data, filename, title, x_label, y_label)
     gnuplot.ylabel(y_label)
     gnuplot.title(title)
     gnuplot.grid(true)
+    gnuplot.axis('auto')
     gnuplot.plotflush()
 end
 
