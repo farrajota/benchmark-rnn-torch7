@@ -317,7 +317,7 @@ engine.hooks.onForwardCriterion = function(state)
         meters.train_err:add(loss)
         loggers.full_train:add{loss}
     else
-        iters = trainIters
+        iters = testIters
         meters.test_err:add(loss)
         loggers.full_test:add{loss}
     end

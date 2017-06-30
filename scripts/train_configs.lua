@@ -41,7 +41,7 @@ local configs = {
     train_frac = 0.95,
     val_frac = 0.05,
     snapshot = 5,
-    print_every = 50,
+    print_every = 100,
     plot_graph = 0
 }
 
