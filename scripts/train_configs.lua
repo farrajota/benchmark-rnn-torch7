@@ -9,7 +9,7 @@ if not g_hidden_dimension_size then
 end
 
 if not g_dataset then
-    g_dataset = 'shakespear'  -- default dataset
+    g_dataset = 'tinyshakespear'  -- default dataset
 end
 
 

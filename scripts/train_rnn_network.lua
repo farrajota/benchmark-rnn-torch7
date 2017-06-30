@@ -13,12 +13,14 @@ end
 ------------------------------------------------------------------------------------------------------------
 
 local function train_net(configs, expID, modelID)
-    --[[ configurations ]]--
-    local configs = paths.dofile('train_configs.lua')
-    configs.expID = expID .. '-' .. g_hidden_dimension_size
-    configs.model = modelID
-    configs.dataset = g_dataset
-    configs.rnn_size = g_hidden_dimension_size
+    assert(configs)
+
+    if expID then
+        configs.expID = expID .. '-' .. g_hidden_dimension_size
+        configs.model = modelID
+        configs.dataset = g_dataset
+        configs.rnn_size = g_hidden_dimension_size
+    end
 
 
     --[[ Parse the configurations ]]--
