@@ -34,7 +34,7 @@ local configs = {
     LR_reduce_factor = 5,
 
     -- Train options
-    nEpochs = 2,
+    nEpochs = 10,
     seq_length = 50,
     batchSize = 64,
     grad_clip = 5,
