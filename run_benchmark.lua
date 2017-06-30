@@ -194,7 +194,7 @@ for _, dim in ipairs(dimensions) do
         -- loss per epoch graph
         plot_graph(loss_data,
                 ('loss_%s_%d.png'):format(dataset, dim),
-                'Train/Test Loss per Epoch',
+                'Train/Test Loss per Epoch ' .. ('(Dim %d)'):format(dim),
                 'Epoch',
                 'Loss')
     end
