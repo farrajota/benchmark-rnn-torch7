@@ -216,7 +216,7 @@ plot_graph(convert_data(batch_stats),
 -- gpu memory usage vs hidden dimensions
 plot_graph(convert_data(gpu_memory_stats),
            'memory_vs_dimension.png',
-           'GPU memory usage vs Hidden Dimension for Depth 2',
+           'GPU Memory Usage vs Hidden Dimension for Depth 2',
            'Hidden Dimension',
            'Memory (MB)')
 
