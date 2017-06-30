@@ -62,17 +62,36 @@ This will train and test several networks on three different datasets and plot a
 
 When running the benchmark script, you should get the same results presented in these next graphs.
 
-#### Shakespear
+All models have a sequence length of 50, a batch size of 64, 2 layers, and were averaged over 10 epochs and over all 3 datasets.
 
-**TODO**
+#### Batch speed
 
-#### linux kernel
+![batch](data/results/speed_vs_dimension.png "batch vs dim")
 
-**TODO**
+#### Forward/backward speed
 
-#### wikipedia
+![fw_bw](data/results/fw_bw_vs_dimension.png "forward/backward vs dim")
 
-**TODO**
+
+#### GPU memory Usage
+
+![gpu_memory](data/results/memory_vs_dimension.png "GPU memory vs dim")
+
+
+#### Datasets
+
+Below are the results of the test loss of all rnn
+models/libraries tested on the Shakespear,
+ Linux kernel and Wikipedia datasets.
+
+| Shakespear | Linux kernel | Wikipedia |
+| --- | --- | --- |
+| ![256 shakespear](data/results/loss_shakespear_256.png "loss") | ![256 linux](data/results/loss_linux_256.png "loss") | ![256 wikipedia](data/results/loss_wikipedia_256.png "loss") |
+| ![512 shakespear](data/results/loss_shakespear_512.png "loss") | ![512 linux](data/results/loss_linux_512.png "loss") | ![512 wikipedia](data/results/loss_wikipedia_512.png "loss") |
+| ![1024 shakespear](data/results/loss_shakespear_1024.png "loss") | ![1024 linux](data/results/loss_linux_1024.png "loss") | ![1024 wikipedia](data/results/loss_wikipedia_1024.png "loss") |
+| ![2048 shakespear](data/results/loss_shakespear_2048.png "loss") | ![2048 linux](data/results/loss_linux_2048.png "loss") | ![2048 wikipedia](data/results/loss_wikipedia_2048.png "loss") |
+| ![4096 shakespear](data/results/loss_shakespear_4096.png "loss") | ![4096 linux](data/results/loss_linux_4096.png "loss") | ![4096 wikipedia](data/results/loss_wikipedia_4096.png "loss") |
+
 
 ## License
 
