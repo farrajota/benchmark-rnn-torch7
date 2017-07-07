@@ -64,6 +64,8 @@ When running the benchmark script, you should get the same results presented in 
 
 All models have a sequence length of 50, a batch size of 64, 2 layers, and were averaged over 10 epochs and over all 3 datasets.
 
+> Warning: Results are currently being processed. Once they are finished (it takes several days!) I'll upload them.
+
 #### Speed (batch/ms)
 
 ![batch](data/results/speed_vs_dimension.png "batch vs dim")
