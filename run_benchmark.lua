@@ -16,6 +16,9 @@ torch.setdefaulttensortype('torch.FloatTensor')
 
 local function load_log(filename)
     local data = {}
+    if not paths.filep(filename) then
+        error(('\nFile %s does not exist'):format(filename))
+    end
     local f = io.open(filename, 'r')
     for line in f:lines() do
         table.insert(data, line)
@@ -130,7 +133,7 @@ end
 --------------------------------------------------------------------------------
 
 g_skip_train = false
-local hidden_dimensions = {256, 512, 1024, 2048, 4096}
+local hidden_dimensions = {64, 128, 256, 512, 1024}
 local datasets = {'shakespear', 'linux', 'wikipedia'}
 
 local hidden_dimensions_info = {}
@@ -170,9 +173,10 @@ for _, dim in ipairs(dimensions) do
     for dataset, configs in pairs(configs_dataset) do
         local loss_data = {}
         for model, config in pairs(configs) do
-            local log_loss_filename = ('data/exp/%s/%s/epoch_loss.log'):format(dataset, config.expID)
-            local log_info_filename = ('data/exp/%s/%s/epoch_info.log'):format(dataset, config.expID)
+            local log_loss_filename = ('./data/exp/%s/%s/epoch_loss.log'):format(dataset, config.expID)
+            local log_info_filename = ('./data/exp/%s/%s/epoch_info.log'):format(dataset, config.expID)
 
+            print(('\nProcessing experiment log: %s/%s'):format(dataset, config.expID))
             local train_loss, test_loss = parse_epoch_info_log(log_loss_filename)
             local forward_time, backward_time, batch_time, memory_mb = parse_epoch_info_log(log_info_filename)
 
