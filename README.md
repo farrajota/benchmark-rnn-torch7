@@ -88,11 +88,11 @@ models tested on the Shakespear,
 
 | Shakespear | Linux kernel | Wikipedia |
 | --- | --- | --- |
+| ![64 shakespear](data/results/loss_shakespear_64.png "loss w/ hidden dimension 64") | ![64 linux](data/results/loss_linux_64.png "loss w/ hidden dimension 64") | ![64 wikipedia](data/results/loss_wikipedia_64.png "loss w/ hidden dimension 64") |
+| ![128 shakespear](data/results/loss_shakespear_128.png "loss w/ hidden dimension 128") | ![128 linux](data/results/loss_linux_128.png "loss w/ hidden dimension 128") | ![128 wikipedia](data/results/loss_wikipedia_128.png "loss w/ hidden dimension 128") |
 | ![256 shakespear](data/results/loss_shakespear_256.png "loss w/ hidden dimension 256") | ![256 linux](data/results/loss_linux_256.png "loss w/ hidden dimension 256") | ![256 wikipedia](data/results/loss_wikipedia_256.png "loss w/ hidden dimension 256") |
 | ![512 shakespear](data/results/loss_shakespear_512.png "loss w/ hidden dimension 512") | ![512 linux](data/results/loss_linux_512.png "loss w/ hidden dimension 512") | ![512 wikipedia](data/results/loss_wikipedia_512.png "loss w/ hidden dimension 512") |
 | ![1024 shakespear](data/results/loss_shakespear_1024.png "loss w/ hidden dimension 1024") | ![1024 linux](data/results/loss_linux_1024.png "loss w/ hidden dimension 1024") | ![1024 wikipedia](data/results/loss_wikipedia_1024.png "loss w/ hidden dimension 1024") |
-| ![2048 shakespear](data/results/loss_shakespear_2048.png "loss w/ hidden dimension 2048") | ![2048 linux](data/results/loss_linux_2048.png "loss w/ hidden dimension 2048") | ![2048 wikipedia](data/results/loss_wikipedia_2048.png "loss w/ hidden dimension 2048") |
-| ![4096 shakespear](data/results/loss_shakespear_4096.png "loss w/ hidden dimension 4096") | ![4096 linux](data/results/loss_linux_4096.png "loss w/ hidden dimension 4096") | ![4096 wikipedia](data/results/loss_wikipedia_4096.png "loss w/ hidden dimension 4096") |
 
 
 ## License
