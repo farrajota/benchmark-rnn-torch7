@@ -18,7 +18,7 @@ local networks_configs = {  -- modelID = model_name_alias
     -- rnn (Element-Research)
     rnn_rnn = 'rnn-rnn',
     lstm_rnn = 'lstm-rnn',
-    fastlstm_rnn = 'lstm(fast)-rnn',
+    --fastlstm_rnn = 'lstm(fast)-rnn',
     gru_rnn = 'gru-rnn',
 
     -- rnnlib (facebook)
@@ -27,10 +27,10 @@ local networks_configs = {  -- modelID = model_name_alias
     gru_rnnlib = 'gru-rnnlib',
 
     -- cudnn
-    rnnrelu_cudnn = 'rnn(relu)-cudnn',
-    rnntanh_cudnn = 'rnn(tanh)-cudnn',
+    --rnnrelu_cudnn = 'rnn(relu)-cudnn',
+    --rnntanh_cudnn = 'rnn(tanh)-cudnn',
     lstm_cudnn = 'lstm-cudnn',
-    blstm_cudnn = 'blstm-cudnn',
+    --blstm_cudnn = 'blstm-cudnn',
     gru_cudnn = 'gru-cudnn',
 }
 
