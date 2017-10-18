@@ -97,4 +97,4 @@ models tested on the Shakespear,
 
 ## License
 
-MIT license (see the LICENSE file)
+[MIT License](LICENSE)
